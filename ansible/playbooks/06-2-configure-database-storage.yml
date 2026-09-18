@@ -1,0 +1,177 @@
+---
+- name: Phase 6.2 - Configure Oracle database storage
+  hosts: database
+  gather_facts: false
+
+  vars:
+    storage_script_path: >-
+      {{ playbook_dir }}/../scripts/configure-database-storage.sh
+
+  tasks:
+
+    - name: Confirm formatting flag is valid
+      ansible.builtin.assert:
+        that:
+          - storage_allow_format | string | lower in ['true', 'false']
+        fail_msg: "storage_allow_format must be true or false."
+
+    - name: Confirm approved EBS volume ID
+      ansible.builtin.assert:
+        that:
+          - database_ebs_volume_id == 'vol-039a7bf67d2169277'
+          - database_expected_disk_size_gib | int == 100
+          - database_mount_point == '/u01'
+          - database_filesystem == 'xfs'
+        fail_msg: "Database storage configuration differs from approved values."
+
+    - name: Verify AWS identity
+      ansible.builtin.command:
+        argv:
+          - aws
+          - sts
+          - get-caller-identity
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: aws_identity
+      changed_when: false
+
+    - name: Verify database instance is SSM Online
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - describe-instance-information
+          - --filters
+          - "Key=InstanceIds,Values={{ database_instance_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: ssm_status
+      changed_when: false
+
+    - name: Assert SSM connectivity
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              (ssm_status.stdout | from_json).InstanceInformationList
+              | selectattr('PingStatus', 'equalto', 'Online')
+              | list
+              | length
+            ) == 1
+        fail_msg: "Database instance is not online in SSM."
+
+    - name: Encode storage script
+      ansible.builtin.set_fact:
+        storage_script_b64: >-
+          {{ lookup('ansible.builtin.file', storage_script_path)
+             | b64encode }}
+
+    - name: Build remote execution command
+      ansible.builtin.set_fact:
+        storage_remote_command: >-
+          printf '%s' '{{ storage_script_b64 }}'
+          | base64 -d
+          | ALLOW_FORMAT={{ storage_allow_format | bool | ternary('true', 'false') }} bash
+
+    - name: Submit storage command through SSM
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - send-command
+          - --instance-ids
+          - "{{ database_instance_id }}"
+          - --document-name
+          - AWS-RunShellScript
+          - --comment
+          - "EFT Phase 6.2 Oracle database storage"
+          - --parameters
+          - "{{ {'commands': [storage_remote_command]} | to_json }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: ssm_submission
+      changed_when: false
+
+    - name: Extract SSM command ID
+      ansible.builtin.set_fact:
+        storage_command_id: >-
+          {{ (ssm_submission.stdout | from_json).Command.CommandId }}
+
+    - name: Wait for remote storage execution
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - get-command-invocation
+          - --command-id
+          - "{{ storage_command_id }}"
+          - --instance-id
+          - "{{ database_instance_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: storage_execution
+      changed_when: false
+      failed_when: false
+      until: >-
+        storage_execution.rc == 0 and
+        (
+          (storage_execution.stdout | from_json).Status
+          in ['Success', 'Failed', 'Cancelled', 'TimedOut']
+        )
+      retries: 60
+      delay: 5
+
+    - name: Assert command invocation was retrieved
+      ansible.builtin.assert:
+        that:
+          - storage_execution.rc == 0
+        fail_msg: "Unable to retrieve SSM execution result."
+
+    - name: Display remote storage output
+      ansible.builtin.debug:
+        msg: "{{ (storage_execution.stdout | from_json).StandardOutputContent }}"
+
+    - name: Display remote errors if present
+      ansible.builtin.debug:
+        msg: "{{ (storage_execution.stdout | from_json).StandardErrorContent }}"
+      when: >-
+        (storage_execution.stdout | from_json).StandardErrorContent
+        | length > 0
+
+    - name: Verify storage execution succeeded
+      ansible.builtin.assert:
+        that:
+          - (storage_execution.stdout | from_json).Status == 'Success'
+          - (storage_execution.stdout | from_json).ResponseCode == 0
+          - >-
+            'DATABASE_STORAGE_SUCCESS' in
+            (storage_execution.stdout | from_json).StandardOutputContent
+            or
+            'DATABASE_STORAGE_VALIDATED' in
+            (storage_execution.stdout | from_json).StandardOutputContent
+        fail_msg: "Database storage configuration failed."
+
+    - name: Display completion status
+      ansible.builtin.debug:
+        msg:
+          - "Phase 6.2 execution completed."
+          - "Instance: {{ database_instance_id }}"
+          - "EBS volume: {{ database_ebs_volume_id }}"
+          - "Formatting permitted: {{ storage_allow_format }}"
+          - "SSM command: {{ storage_command_id }}"

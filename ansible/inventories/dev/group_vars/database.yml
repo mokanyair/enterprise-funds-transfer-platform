@@ -1,0 +1,12 @@
+---
+aws_region: us-east-1
+aws_profile: apiuser
+
+database_instance_id: "i-092203ac1a207d867"
+
+database_expected_disk_size_gib: 100
+database_ebs_volume_id: "vol-039a7bf67d2169277"
+
+database_mount_point: /u01
+database_filesystem: xfs
+storage_allow_format: false  
