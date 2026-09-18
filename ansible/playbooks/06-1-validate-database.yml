@@ -1,0 +1,75 @@
+---
+- name: Phase 6.1 - Validate Oracle database infrastructure
+  hosts: database
+  gather_facts: false
+
+  tasks:
+    - name: Verify AWS identity
+      ansible.builtin.command:
+        argv:
+          - aws
+          - sts
+          - get-caller-identity
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+      register: aws_identity
+      changed_when: false
+
+    - name: Verify database EC2 instance
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-instances
+          - --instance-ids
+          - "{{ database_instance_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --query
+          - "Reservations[].Instances[].State.Name"
+          - --output
+          - text
+      register: database_state
+      changed_when: false
+
+    - name: Assert database instance is running
+      ansible.builtin.assert:
+        that:
+          - database_state.stdout | trim == "running"
+        fail_msg: "Database EC2 instance is not running."
+
+    - name: Verify SSM connectivity
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - describe-instance-information
+          - --filters
+          - "Key=InstanceIds,Values={{ database_instance_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --query
+          - "InstanceInformationList[0].PingStatus"
+          - --output
+          - text
+      register: ssm_status
+      changed_when: false
+
+    - name: Assert SSM is online
+      ansible.builtin.assert:
+        that:
+          - ssm_status.stdout | trim == "Online"
+        fail_msg: "Database server is not connected to Systems Manager."
+
+    - name: Display validation result
+      ansible.builtin.debug:
+        msg:
+          - "Database instance: {{ database_instance_id }}"
+          - "EC2 state: {{ database_state.stdout | trim }}"
+          - "SSM status: {{ ssm_status.stdout | trim }}"

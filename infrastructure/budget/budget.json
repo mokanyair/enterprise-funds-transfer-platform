@@ -1,0 +1,9 @@
+{
+  "BudgetName": "Enterprise-Banking-Monthly-Budget",
+  "BudgetLimit": {
+    "Amount": "50",
+    "Unit": "USD"
+  },
+  "TimeUnit": "MONTHLY",
+  "BudgetType": "COST"
+}

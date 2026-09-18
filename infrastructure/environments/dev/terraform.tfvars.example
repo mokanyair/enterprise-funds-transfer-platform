@@ -1,0 +1,9 @@
+aws_region = "us-east-1"
+
+project = "eft"
+
+vpc_cidr = "10.30.0.0/16"
+
+oracle_ami_id = "REPLACE_WITH_VERIFIED_AMI_ID"
+
+oracle_instance_type = "t3.xlarge"
