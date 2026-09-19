@@ -1,0 +1,92 @@
+---
+- name: Phase 6.3 - Validate Oracle installation prerequisites
+  hosts: database
+  gather_facts: false
+
+  tasks:
+
+    - name: Confirm approved database instance
+      ansible.builtin.assert:
+        that:
+          - database_instance_id == 'i-092203ac1a207d867'
+          - database_ebs_volume_id == 'vol-039a7bf67d2169277'
+          - database_mount_point == '/u01'
+        fail_msg: "Database infrastructure differs from approved configuration."
+
+    - name: Verify EC2 instance configuration
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-instances
+          - --instance-ids
+          - "{{ database_instance_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: ec2_result
+      changed_when: false
+
+    - name: Extract instance information
+      ansible.builtin.set_fact:
+        db_instance: >-
+          {{
+            (ec2_result.stdout | from_json)
+            .Reservations[0].Instances[0]
+          }}
+
+    - name: Verify instance is running
+      ansible.builtin.assert:
+        that:
+          - db_instance.State.Name == 'running'
+          - db_instance.Architecture == 'x86_64'
+        fail_msg: "Database instance is not running or has an unexpected architecture."
+
+    - name: Verify database EBS volume
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-volumes
+          - --volume-ids
+          - "{{ database_ebs_volume_id }}"
+          - --profile
+          - "{{ aws_profile }}"
+          - --region
+          - "{{ aws_region }}"
+          - --output
+          - json
+      register: volume_result
+      changed_when: false
+
+    - name: Extract volume information
+      ansible.builtin.set_fact:
+        db_volume: >-
+          {{
+            (volume_result.stdout | from_json).Volumes[0]
+          }}
+
+    - name: Validate EBS volume
+      ansible.builtin.assert:
+        that:
+          - db_volume.Size | int == 100
+          - db_volume.State == 'in-use'
+          - >-
+            db_volume.Attachments
+            | selectattr('InstanceId', 'equalto', database_instance_id)
+            | list
+            | length == 1
+        fail_msg: "Database volume validation failed."
+
+    - name: Display prerequisite validation
+      ansible.builtin.debug:
+        msg:
+          - "Instance: {{ database_instance_id }}"
+          - "Architecture: {{ db_instance.Architecture }}"
+          - "Instance type: {{ db_instance.InstanceType }}"
+          - "EBS volume: {{ database_ebs_volume_id }}"
+          - "Volume size: {{ db_volume.Size }} GiB"
+          - "AWS infrastructure validation passed."
