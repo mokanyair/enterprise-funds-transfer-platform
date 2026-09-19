@@ -1,0 +1,79 @@
+# No secrets in this file. Every credential and endpoint comes from the environment; the
+# application fails at startup if a required one is missing. See README.md and .env.example.
+spring:
+  application:
+    name: funds-transfer-service
+  datasource:
+    # Runtime identity (FUNDS_APP): DML/SELECT only, no DDL. Never the schema owner.
+    url: ${FUNDS_DB_URL}
+    username: ${FUNDS_DB_USER}
+    password: ${FUNDS_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${FUNDS_DB_POOL_SIZE:10}
+      connection-timeout: 10000
+      # Session-level default so unqualified table names resolve to the owner's schema.
+      connection-init-sql: ALTER SESSION SET CURRENT_SCHEMA = ${FUNDS_DB_SCHEMA:FUNDS_OWNER}
+  flyway:
+    # Off by default: migrations run with the separate migration identity (FUNDS_OWNER), on demand.
+    enabled: ${FLYWAY_ENABLED:false}
+    url: ${FUNDS_MIGRATION_DB_URL:${FUNDS_DB_URL}}
+    user: ${FUNDS_MIGRATION_DB_USER:}
+    password: ${FUNDS_MIGRATION_DB_PASSWORD:}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true      # contract: additionalProperties false
+    serialization:
+      write-dates-as-timestamps: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${FUNDS_JWT_ISSUER_URI}
+  kafka:
+    bootstrap-servers: ${FUNDS_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+funds:
+  request-deadline: 10s
+  db:
+    lock-wait-seconds: 5
+  idempotency:
+    replay-retention: 7d
+    lease: 60s
+    tombstone-retention: 90d
+    in-progress-retry-after: 1s
+    abort-grace: 2m
+  risk:
+    review-threshold: "10000.00"
+  outbox:
+    publisher-enabled: false
+    topic: funds.transfer.events
+    batch-size: 100
+    max-attempts: 10
+    poll-interval: 1s
+  jobs:
+    enabled: true
+    reconcile-interval: 30s
+    purge-interval: 10m
+    purge-batch: 500
+    anomaly-checks: false
