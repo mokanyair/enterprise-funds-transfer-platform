@@ -1,0 +1,14 @@
+# Lint rules for the modular specs. The domain files are partly libraries (common,
+# identity), so components that only other files use would look "unused" in isolation.
+extends:
+  - recommended
+rules:
+  no-unused-components: off
+  info-license: off
+  # Contract: every response, success or error, carries X-Correlation-Id.
+  response-contains-header:
+    severity: error
+    names:
+      2XX: [X-Correlation-Id]
+      4XX: [X-Correlation-Id]
+      5XX: [X-Correlation-Id]

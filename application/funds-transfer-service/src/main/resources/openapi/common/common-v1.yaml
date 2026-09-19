@@ -1,0 +1,137 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Common
+  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Shared building blocks used by every domain spec: money and account-ID
+    types, the error model and closed `ErrorCode` set, the correlation-ID
+    header, and the generic 400/404/500 responses. Contains no paths.
+    Add a new error code here (one closed set), never in a domain file.
+servers:
+  - url: /api/v1
+paths: {}
+components:
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema: { type: string, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' }
+
+  headers:
+    # Present on EVERY response, success or error. Error bodies repeat it in `correlationId`.
+    CorrelationId:
+      description: |
+        Always present. Echoes the request's `X-Correlation-Id` when it is
+        valid, otherwise a server-generated value. Error bodies repeat it in
+        `correlationId`; quote it when contacting support.
+      schema: { type: string, maxLength: 64 }
+      example: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+
+
+  schemas:
+    # Public account identifier (ACCOUNTS.ACCOUNT_NUMBER), e.g. ACC001; never the
+    # internal RAW(16) key. Shared by the transfers and accounts specs.
+    AccountId:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{1,32}$'
+
+    Money:
+      type: string
+      description: |
+        Non-negative decimal string, up to 4 fractional digits on the wire
+        (`NUMBER(19,4)` storage). Requests must additionally respect the
+        currency's minor-unit scale (USD: 2); more digits is a 400. Zero is
+        well-formed but fails business validation (422 `AMOUNT_NOT_POSITIVE`).
+        A negative or non-decimal value is malformed (400).
+      pattern: '^(0|[1-9][0-9]{0,14})(\.[0-9]{1,4})?$'
+      example: "250.00"
+
+    ErrorCode:
+      type: string
+      description: |
+        Closed set. HTTP status per code:
+        400 INVALID_REQUEST | 401 UNAUTHENTICATED | 403 FORBIDDEN | 404 NOT_FOUND |
+        409 IDEMPOTENCY_KEY_REUSED, IDEMPOTENCY_IN_PROGRESS, IDEMPOTENCY_KEY_EXPIRED,
+            TRANSFER_NOT_CANCELLABLE |
+        422 INSUFFICIENT_FUNDS, ACCOUNT_INACTIVE, CURRENCY_MISMATCH, SAME_ACCOUNT,
+            AMOUNT_NOT_POSITIVE, LIMIT_EXCEEDED, TRANSFER_REJECTED |
+        500 INTERNAL_ERROR
+      enum:
+        - INVALID_REQUEST
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - IDEMPOTENCY_IN_PROGRESS
+        - IDEMPOTENCY_KEY_EXPIRED
+        - TRANSFER_NOT_CANCELLABLE
+        - INSUFFICIENT_FUNDS
+        - ACCOUNT_INACTIVE
+        - CURRENCY_MISMATCH
+        - SAME_ACCOUNT
+        - AMOUNT_NOT_POSITIVE
+        - LIMIT_EXCEEDED
+        - TRANSFER_REJECTED
+        - INTERNAL_ERROR
+
+    Error:
+      type: object
+      required: [code, message, correlationId, timestamp]
+      properties:
+        code:          { $ref: '#/components/schemas/ErrorCode' }
+        message:
+          type: string
+          description: Safe for display. Never contains internal detail.
+        correlationId: { type: string }
+        timestamp:     { type: string, format: date-time }
+        details:
+          type: array
+          description: Field-level problems (400/422 only).
+          items:
+            type: object
+            required: [field, issue]
+            properties:
+              field: { type: string }
+              issue: { type: string }
+
+
+  responses:
+    BadRequest:
+      description: Malformed JSON, missing/invalid header or path parameter, schema violation, or amount scale exceeding the currency's minor units. Code `INVALID_REQUEST`.
+      headers:
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            code: INVALID_REQUEST
+            message: The request is invalid.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"
+            details:
+              - { field: Idempotency-Key, issue: must be a UUID }
+    NotFound:
+      description: Resource absent, or not visible to the caller. Code `NOT_FOUND`. Identical in both cases.
+      headers:
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            code: NOT_FOUND
+            message: The requested resource was not found.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"
+    ServerError:
+      description: Unexpected failure or server-side timeout. Code `INTERNAL_ERROR`. Safe to retry with the same Idempotency-Key.
+      headers:
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            code: INTERNAL_ERROR
+            message: An unexpected error occurred. Quote the correlation ID when contacting support.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"
