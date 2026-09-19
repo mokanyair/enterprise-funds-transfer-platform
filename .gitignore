@@ -33,3 +33,11 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Build output (Maven), including the generated bundled OpenAPI spec
+target/
+
+# Local environment files may hold credentials; only .env.example is tracked
+.env
+*.env
+!.env.example

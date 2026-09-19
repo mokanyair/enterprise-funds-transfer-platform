@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Transfers
+  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Transfer lifecycle: create (idempotent), read, cancel. Owns the transfer
+    state machine (`TransferStatus`), the idempotency semantics, the
+    business-validation 422 set and the 409 conflicts. Depends on `common`
+    and `identity`.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+paths:
+  /transfers:
+    post:
+      operationId: createTransfer
+      tags: [transfers]
+      summary: Create a transfer
+      x-authorization: CUSTOMER who owns the source account. OPERATOR gets 403.
+      description: |
+        Requires `Idempotency-Key`. Uniqueness is scoped to the authenticated
+        actor: the same key from two different users is two independent keys.
+
+        Validation order (first failure wins)
+        1. Schema, headers, amount scale -> 400.
+        2. Source account exists and is owned by the caller -> otherwise 404.
+        3. Destination account exists and is active, source is active
+           -> otherwise 422 `ACCOUNT_INACTIVE`. A destination that does not
+           exist returns the same 422 as an inactive one, so callers cannot
+           probe which account IDs exist.
+        4. Source and destination differ -> 422 `SAME_ACCOUNT`.
+        5. Amount is positive -> 422 `AMOUNT_NOT_POSITIVE` (zero).
+        6. Request currency equals both account currencies -> 422
+           `CURRENCY_MISMATCH`.
+        7. Limits, advisory pre-check without locks -> 422 `LIMIT_EXCEEDED`.
+           Fast-fail only; step 9 is authoritative.
+        8. Risk decision -> 422 `TRANSFER_REJECTED` (generic, no detail), or
+           `PENDING_REVIEW`.
+        9. Posting, inside the transaction. Locks are taken in a fixed order:
+           the source account's customer row, then the balance rows of both
+           accounts in ascending account-ID order. Then, under those locks,
+           in this order: limits are re-checked against cumulative usage
+           -> 422 `LIMIT_EXCEEDED`; available funds are checked -> 422
+           `INSUFFICIENT_FUNDS`. Concurrent transfers therefore cannot
+           jointly exceed a daily or monthly limit. See
+           `docs/milestone-2-erd.md` section 10.
+
+        Any 422 outcome is stored against the idempotency key and replayed
+        verbatim on retry. Risk rejections also persist a `REJECTED` transfer
+        for audit.
+
+        Idempotency policy
+        - The key is scoped to the authenticated actor: the same key from two
+          users is two independent keys. Only this operation takes a key.
+        - Same actor + key + identical payload: the original outcome is
+          replayed (same status code and body, `Idempotent-Replayed: true`).
+          Nothing is processed a second time. The replayed body is the original
+          snapshot; use `GET /transfers/{transferId}` for the current state.
+          A replayed error body carries the current request's `correlationId`
+          and `timestamp`; every other field is verbatim.
+        - Same actor + key + different payload: 409 `IDEMPOTENCY_KEY_REUSED`.
+        - Same actor + key while the first request is still running: 409
+          `IDEMPOTENCY_IN_PROGRESS` with `Retry-After`. Concurrent retries
+          never double-post.
+        - Retention is configurable (default 7 days). It bounds how long the
+          response can be replayed, not whether the key is remembered. Once it
+          elapses the key is still recorded, and a retry returns 409
+          `IDEMPOTENCY_KEY_EXPIRED` instead of being processed again, so an
+          expired key can never cause a second posting. The original request
+          was processed; when it created a transfer, the response carries that
+          transfer's `Location`.
+        - Recovery: a request that dies part-way (crash, timeout) is reconciled
+          server-side. Nothing it did was committed. Retry with the same key
+          and payload; it is processed once. If the first attempt is somehow
+          still running, the server fences it off so only one attempt can post.
+
+        Payload equality is decided by a SHA-256 hash of the canonicalised
+        request body: object keys sorted; `amount` compared by decimal value
+        (`250.00` equals `250.0`); an absent `reference` equals `null`; other
+        strings compared exactly, whitespace included.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+            example:
+              sourceAccountId: ACC001
+              destinationAccountId: ACC002
+              amount: "250.00"
+              currency: USD
+              reference: Invoice payment
+      responses:
+        '201':
+          description: Transfer created. `status` is the state reached when the request finished.
+          headers:
+            Location: { $ref: '#/components/headers/TransferLocation' }
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+              examples:
+                completed:
+                  summary: Posted
+                  value:
+                    transferId: 0b6f4e1e-3c1a-4d0e-9b53-6c8f2a1d7e90
+                    sourceAccountId: ACC001
+                    destinationAccountId: ACC002
+                    amount: "250.00"
+                    currency: USD
+                    status: COMPLETED
+                    createdAt: "2026-09-18T10:15:30.123Z"
+                    updatedAt: "2026-09-18T10:15:30.410Z"
+                pendingReview:
+                  summary: Held for manual review (no funds moved yet)
+                  value:
+                    transferId: 7d2c9a54-1f0b-4a6e-8a35-2b9e4c1f6d08
+                    sourceAccountId: ACC001
+                    destinationAccountId: ACC002
+                    amount: "25000.00"
+                    currency: USD
+                    status: PENDING_REVIEW
+                    createdAt: "2026-09-18T10:20:01.001Z"
+                    updatedAt: "2026-09-18T10:20:01.088Z"
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /transfers/{transferId}:
+    get:
+      operationId: getTransfer
+      tags: [transfers]
+      summary: Get transfer status and details
+      x-authorization: CUSTOMER who owns the source or destination account, or OPERATOR. Otherwise 404.
+      description: |
+        Caller must own the source or destination account, or hold an
+        operator role. Otherwise 404. A malformed `transferId` returns 400.
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Transfer found.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+              example:
+                transferId: 0b6f4e1e-3c1a-4d0e-9b53-6c8f2a1d7e90
+                sourceAccountId: ACC001
+                destinationAccountId: ACC002
+                amount: "250.00"
+                currency: USD
+                status: COMPLETED
+                createdAt: "2026-09-18T10:15:30.123Z"
+                updatedAt: "2026-09-18T10:15:30.410Z"
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /transfers/{transferId}/cancel:
+    post:
+      operationId: cancelTransfer
+      tags: [transfers]
+      summary: Cancel an unposted transfer
+      x-authorization: CUSTOMER who owns the source account, or OPERATOR. Destination-only owner gets 403.
+      description: |
+        Only transfers in `RECEIVED`, `VALIDATING` or `PENDING_REVIEW` are
+        cancellable, and only by the source account owner or an operator.
+        `PROCESSING` is not cancellable (posting may be under way).
+        A posted (`COMPLETED`) transfer is never cancelled in place; a
+        reversal is a new linked transfer and is out of V1 API scope.
+        Cancelling an already `CANCELLED` transfer returns 200 with the
+        current state (idempotent).
+
+        A caller who can see the transfer (owns the destination account) but
+        may not cancel it gets 403. A caller who cannot see it gets 404.
+        The state check and the state change happen under a row lock, so a
+        cancel racing a posting resolves to exactly one outcome.
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Transfer is now (or already was) `CANCELLED`.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+              example:
+                transferId: 7d2c9a54-1f0b-4a6e-8a35-2b9e4c1f6d08
+                sourceAccountId: ACC001
+                destinationAccountId: ACC002
+                amount: "25000.00"
+                currency: USD
+                status: CANCELLED
+                createdAt: "2026-09-18T10:20:01.001Z"
+                updatedAt: "2026-09-18T10:31:12.500Z"
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '409':
+          description: |
+            Transfer is `PROCESSING`, `COMPLETED` or another non-cancellable
+            terminal state. Code `TRANSFER_NOT_CANCELLABLE`.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+              example:
+                code: TRANSFER_NOT_CANCELLABLE
+                message: The transfer has already been posted and cannot be cancelled.
+                correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+                timestamp: "2026-09-18T10:32:00.000Z"
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../identity/identity-v1.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client-generated UUID, one per logical transfer. Generate a new key for
+        each new transfer; reuse a key only to retry the same request. Missing
+        or malformed gives 400. Full policy under `createTransfer`.
+      schema: { type: string, format: uuid }
+    TransferId:
+      name: transferId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  headers:
+    TransferLocation:
+      description: |
+        URL of the transfer. On `201`, the created transfer. On `409` with code
+        `IDEMPOTENCY_KEY_EXPIRED`, the transfer the original request created, when it created one.
+      schema: { type: string }
+      example: /api/v1/transfers/0b6f4e1e-3c1a-4d0e-9b53-6c8f2a1d7e90
+    IdempotentReplayed:
+      description: |
+        Present, with value `true`, only when a retried request is answered
+        from the stored outcome (`201` or `422`) instead of being processed
+        again. Absent on the first response.
+      schema: { type: boolean }
+      example: true
+    RetryAfter:
+      description: |
+        Seconds to wait before retrying. Only on `409` with code
+        `IDEMPOTENCY_IN_PROGRESS`; absent on `IDEMPOTENCY_KEY_REUSED`.
+      schema: { type: integer, minimum: 0 }
+      example: 1
+
+  schemas:
+    TransferStatus:
+      type: string
+      description: |
+        Legal transitions (enforced in code and tests):
+        RECEIVED -> VALIDATING | CANCELLED
+        VALIDATING -> PENDING_REVIEW | PROCESSING | REJECTED | CANCELLED
+        PENDING_REVIEW -> PROCESSING | REJECTED | CANCELLED
+        PROCESSING -> COMPLETED | FAILED
+        COMPLETED, REJECTED, FAILED, CANCELLED are terminal.
+        Any other transition is a defect and must be refused.
+        Kafka publication is tracked on the outbox event, not here.
+      enum: [RECEIVED, VALIDATING, PENDING_REVIEW, PROCESSING, COMPLETED, REJECTED, FAILED, CANCELLED]
+
+    CreateTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceAccountId, destinationAccountId, amount, currency]
+      properties:
+        sourceAccountId:      { $ref: '../common/common-v1.yaml#/components/schemas/AccountId' }
+        destinationAccountId: { $ref: '../common/common-v1.yaml#/components/schemas/AccountId' }
+        amount:               { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        currency:
+          type: string
+          description: ISO 4217. V1 supported set is USD only, to be confirmed.
+          enum: [USD]
+        reference:
+          type: string
+          maxLength: 140
+          description: Free text, treated as untrusted. Do not put personal data or secrets here.
+
+    Transfer:
+      type: object
+      required: [transferId, sourceAccountId, destinationAccountId, amount, currency, status, createdAt, updatedAt]
+      properties:
+        transferId:           { type: string, format: uuid }
+        sourceAccountId:      { type: string }
+        destinationAccountId: { type: string }
+        amount:               { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        currency:             { type: string, minLength: 3, maxLength: 3 }
+        status:               { $ref: '#/components/schemas/TransferStatus' }
+        createdAt:            { type: string, format: date-time }
+        updatedAt:            { type: string, format: date-time }
+
+    TransferPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:         { type: array, items: { $ref: '#/components/schemas/Transfer' } }
+        page:          { type: integer }
+        size:          { type: integer }
+        totalElements: { type: integer, format: int64 }
+        totalPages:    { type: integer }
+
+
+  responses:
+    Conflict:
+      description: |
+        `IDEMPOTENCY_KEY_REUSED` (same key, different payload),
+        `IDEMPOTENCY_IN_PROGRESS` (first request still running; carries `Retry-After`) or
+        `IDEMPOTENCY_KEY_EXPIRED` (the key was used and its stored response is no longer
+        replayable; the request was NOT processed again; carries `Location` when the
+        original request created a transfer).
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+        Location: { $ref: '#/components/headers/TransferLocation' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          examples:
+            keyReused:
+              value:
+                code: IDEMPOTENCY_KEY_REUSED
+                message: This Idempotency-Key was already used with a different request.
+                correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+                timestamp: "2026-09-18T10:16:00.000Z"
+            inProgress:
+              value:
+                code: IDEMPOTENCY_IN_PROGRESS
+                message: A request with this Idempotency-Key is still being processed.
+                correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+                timestamp: "2026-09-18T10:16:00.000Z"
+            keyExpired:
+              value:
+                code: IDEMPOTENCY_KEY_EXPIRED
+                message: This Idempotency-Key was already used and its stored response has expired. The original request was processed and has not been repeated.
+                correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+                timestamp: "2026-09-18T10:16:00.000Z"
+    Unprocessable:
+      description: |
+        Well-formed but fails business validation. Codes: `INSUFFICIENT_FUNDS`,
+        `ACCOUNT_INACTIVE`, `CURRENCY_MISMATCH`, `SAME_ACCOUNT`,
+        `LIMIT_EXCEEDED`, `AMOUNT_NOT_POSITIVE`, `TRANSFER_REJECTED`.
+        A risk rejection returns the generic `TRANSFER_REJECTED` with no
+        risk detail. A retried request replays the stored outcome with the same
+        status and body.
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          example:
+            code: INSUFFICIENT_FUNDS
+            message: The source account has insufficient available funds.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"

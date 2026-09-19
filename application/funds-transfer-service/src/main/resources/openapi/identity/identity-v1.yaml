@@ -1,0 +1,59 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Identity
+  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Authentication and authorization contract. V1 exposes **no identity
+    endpoints**: users and customers are provisioned outside V1 (decision D2),
+    and the caller is always derived from the verified bearer token. This spec
+    therefore owns the bearer security scheme, the `Role` values and the
+    401/403 responses, and has no paths.
+servers:
+  - url: /api/v1
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Verified by the resource server. Subject maps to `APP_USERS.IDP_SUBJECT`;
+        the role (`CUSTOMER` or `OPERATOR`) comes from `APP_USERS`, not from
+        a client-supplied claim.
+
+
+  schemas:
+    Role:
+      type: string
+      description: |
+        Role of the authenticated user, read from `APP_USERS.ROLE` (never from a
+        client-supplied claim). Which role may do what is in the authorization
+        matrix in `docs/milestone-1-contract.md`.
+      enum: [CUSTOMER, OPERATOR]
+
+  responses:
+    Unauthorized:
+      description: Missing, expired or invalid token. Code `UNAUTHENTICATED`.
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          example:
+            code: UNAUTHENTICATED
+            message: Authentication is required.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"
+    Forbidden:
+      description: Authenticated and the resource is recognised, but the caller's role lacks the operation. Code `FORBIDDEN`.
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          example:
+            code: FORBIDDEN
+            message: You are not permitted to perform this operation.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-09-18T10:15:30.123Z"

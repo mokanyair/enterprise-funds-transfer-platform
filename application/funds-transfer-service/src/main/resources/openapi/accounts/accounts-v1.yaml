@@ -1,0 +1,128 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Accounts
+  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Account-scoped reads: balance and per-account transfer history. Owns the
+    `Balance` schema and the ownership/404 rule for accounts. The history
+    endpoint returns `Transfer` items defined in the `transfers` spec, so this
+    spec depends on `transfers`, `common` and `identity`.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+paths:
+  /accounts/{accountId}/balance:
+    get:
+      operationId: getAccountBalance
+      tags: [accounts]
+      summary: Read account balance
+      x-authorization: CUSTOMER who owns the account, or OPERATOR. Otherwise 404.
+      description: |
+        Caller must own the account or be an operator (signatory access is
+        out of V1 scope). Any other account, existing or not, returns an
+        identical 404 (same body shape and comparable latency) so account IDs
+        cannot be enumerated.
+
+        `availableBalance` is what may still be transferred; `ledgerBalance`
+        is the posted ledger total. V1 has no holds, so the two are always
+        equal. Both fields are returned so the response shape does not
+        change if a hold model is added later.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Balance.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+              example:
+                accountId: ACC001
+                currency: USD
+                availableBalance: "1250.0000"
+                ledgerBalance: "1250.0000"
+                asOf: "2026-09-18T10:15:30.123Z"
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /accounts/{accountId}/transfers:
+    get:
+      operationId: listAccountTransfers
+      tags: [accounts]
+      summary: Paginated transfer history for an account
+      x-authorization: CUSTOMER who owns the account, or OPERATOR. Otherwise 404.
+      description: |
+        Transfers where the account is source or destination. Ordered by
+        `createdAt` descending, `transferId` as tiebreak. Same authorization
+        and 404 behaviour as the balance endpoint. An out-of-range `page`
+        returns 200 with an empty `items` array.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+        - name: page
+          in: query
+          description: Zero-based page index.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: status
+          in: query
+          description: Optional filter.
+          schema: { $ref: '../transfers/transfers-v1.yaml#/components/schemas/TransferStatus' }
+      responses:
+        '200':
+          description: One page of transfers.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '../transfers/transfers-v1.yaml#/components/schemas/TransferPage' }
+              example:
+                items:
+                  - transferId: 0b6f4e1e-3c1a-4d0e-9b53-6c8f2a1d7e90
+                    sourceAccountId: ACC001
+                    destinationAccountId: ACC002
+                    amount: "250.00"
+                    currency: USD
+                    status: COMPLETED
+                    createdAt: "2026-09-18T10:15:30.123Z"
+                    updatedAt: "2026-09-18T10:15:30.410Z"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../identity/identity-v1.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { $ref: '../common/common-v1.yaml#/components/schemas/AccountId' }
+
+
+  schemas:
+    Balance:
+      type: object
+      required: [accountId, currency, availableBalance, ledgerBalance, asOf]
+      properties:
+        accountId:        { type: string }
+        currency:         { type: string, minLength: 3, maxLength: 3 }
+        availableBalance: { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        ledgerBalance:    { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        asOf:             { type: string, format: date-time }
