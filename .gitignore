@@ -8,6 +8,7 @@
 
 # Terraform plans
 *.tfplan
+tfplan
 *-plan.txt
 plan.out
 
@@ -41,3 +42,7 @@ target/
 .env
 *.env
 !.env.example
+
+# Editor/script backups
+*.bak
+*.bak.*
