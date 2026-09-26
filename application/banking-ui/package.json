@@ -10,7 +10,8 @@
     "typecheck": "tsc -b --noEmit",
     "msw:init": "msw init public --save",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

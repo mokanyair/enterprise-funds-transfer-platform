@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AuthContext } from "./AuthContext";
-import { setAccessTokenGetter, setUnauthenticatedHandler } from "../api/http";
+import { setTokenSource } from "../api/http";
 import type { AuthState, AuthUser } from "./types";
+import { clearPendingTransfer } from "../features/transfers/pendingTransfer";
 
 const STORAGE_KEY = "novabank.dev-session";
 
@@ -17,8 +18,11 @@ export function DevAuthProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    setAccessTokenGetter(() => (user ? `dev:${user.subject}` : null));
-    setUnauthenticatedHandler(() => setUser(null));
+    setTokenSource({
+      getToken: async () => (user ? `dev:${user.subject}` : null),
+      forceRefresh: async () => false, // dev tokens never expire
+      onUnauthenticated: () => setUser(null),
+    });
   }, [user]);
 
   const value = useMemo<AuthState>(
@@ -31,6 +35,7 @@ export function DevAuthProvider({ children }: { children: ReactNode }) {
       },
       logout: () => {
         sessionStorage.removeItem(STORAGE_KEY);
+        clearPendingTransfer();
         setUser(null);
       },
     }),

@@ -18,6 +18,13 @@ export function useCancelTransfer(transferId: string) {
     mutationFn: () => transfersApi.cancel(transferId),
     onSuccess: (transfer) => {
       queryClient.setQueryData(["transfer", transferId], transfer);
+      // Balances and history lists showed this transfer as pending; refetch them.
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["account"] });
+    },
+    onError: () => {
+      // e.g. TRANSFER_NOT_CANCELLABLE: the status moved on server-side; show the real one.
+      queryClient.invalidateQueries({ queryKey: ["transfer", transferId] });
     },
   });
 }

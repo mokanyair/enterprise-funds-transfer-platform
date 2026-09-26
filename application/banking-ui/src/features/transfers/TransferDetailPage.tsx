@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useCancelTransfer, useTransfer } from "../../hooks/useTransfer";
 import { isCancellableStatus, isTerminalStatus } from "../../api/types";
@@ -24,6 +24,7 @@ export function TransferDetailPage() {
   const { transferId } = useParams<{ transferId: string }>();
   const transferQuery = useTransfer(transferId);
   const cancelTransfer = useCancelTransfer(transferId ?? "");
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   if (transferQuery.isLoading) {
     return <Skeleton height="260px" />;
@@ -61,18 +62,45 @@ export function TransferDetailPage() {
           <Row label={terminal ? "Finalised" : "Last updated"} value={new Date(transfer.updatedAt).toLocaleString()} />
         </dl>
 
-        {isCancellableStatus(transfer.status) && (
-          <div className="stack stack--tight">
-            {cancelTransfer.isError && <ErrorPanel error={cancelTransfer.error} />}
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={() => cancelTransfer.mutate()}
-              disabled={cancelTransfer.isPending}
-              style={{ alignSelf: "flex-start" }}
-            >
-              {cancelTransfer.isPending ? "Cancelling…" : "Cancel transfer"}
-            </button>
+        {cancelTransfer.isError && <ErrorPanel error={cancelTransfer.error} />}
+        {isCancellableStatus(transfer.status) && !confirmingCancel && (
+          <button
+            type="button"
+            className="btn btn--danger"
+            onClick={() => {
+              cancelTransfer.reset();
+              setConfirmingCancel(true);
+            }}
+            style={{ alignSelf: "flex-start" }}
+          >
+            Cancel transfer
+          </button>
+        )}
+        {isCancellableStatus(transfer.status) && confirmingCancel && (
+          <div className="alert alert--warning stack stack--tight" role="alertdialog" aria-labelledby="cancel-confirm-title">
+            <strong id="cancel-confirm-title">Cancel this transfer?</strong>
+            <span>
+              <CurrencyDisplay amount={transfer.amount} currency={transfer.currency} /> to{" "}
+              <MaskedAccountNumber accountId={transfer.destinationAccountId} /> won't be sent. This can't be undone.
+            </span>
+            <div className="row">
+              <button
+                type="button"
+                className="btn btn--danger"
+                disabled={cancelTransfer.isPending}
+                onClick={() => cancelTransfer.mutate(undefined, { onSettled: () => setConfirmingCancel(false) })}
+              >
+                {cancelTransfer.isPending ? "Cancelling…" : "Yes, cancel transfer"}
+              </button>
+              <button
+                type="button"
+                className="btn btn--secondary"
+                disabled={cancelTransfer.isPending}
+                onClick={() => setConfirmingCancel(false)}
+              >
+                Keep transfer
+              </button>
+            </div>
           </div>
         )}
       </div>
