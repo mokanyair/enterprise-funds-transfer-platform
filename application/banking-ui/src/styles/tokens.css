@@ -1,0 +1,44 @@
+/* Design tokens from the NovaBank design guide (Part I, Section 3). */
+:root {
+  --color-bg: #fafafa;
+  --color-surface: #ffffff;
+  --color-text: #080606;
+  --color-accent: #fd2f02;
+  --color-accent-contrast: #ffffff;
+  --color-accent-secondary: #5e81b1;
+  --color-border: #e5e7eb;
+  --color-muted: #6b7280;
+  --color-success: #15803d;
+  --color-success-bg: #ecfdf3;
+  --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-error: #b91c1c;
+  --color-error-bg: #fef2f2;
+  --color-info: #2563eb;
+  --color-info-bg: #eff6ff;
+
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  --font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --font-page-title: 600 28px/1.2 var(--font-family);
+  --font-section-title: 600 20px/1.3 var(--font-family);
+  --font-card-title: 600 16px/1.4 var(--font-family);
+  --font-body: 400 14px/1.5 var(--font-family);
+  --font-metadata: 400 12px/1.4 var(--font-family);
+  --font-balance: 700 34px/1.1 var(--font-family);
+
+  --shadow-card: 0 1px 2px rgba(8, 6, 6, 0.04), 0 1px 8px rgba(8, 6, 6, 0.04);
+  --sidebar-width: 240px;
+  --topbar-height: 64px;
+  --bottomnav-height: 64px;
+}

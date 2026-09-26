@@ -7,6 +7,8 @@ import com.enterprise.funds.transfer.domain.TransferStatus;
 import com.enterprise.funds.transfer.persistence.AccountRepository;
 import com.enterprise.funds.transfer.persistence.Rows.AccountRow;
 import com.enterprise.funds.transfer.persistence.TransferRepository;
+import com.enterprise.funds.transfer.web.dto.AccountListDto;
+import com.enterprise.funds.transfer.web.dto.AccountSummaryDto;
 import com.enterprise.funds.transfer.web.dto.BalanceDto;
 import com.enterprise.funds.transfer.web.dto.TransferDto;
 import com.enterprise.funds.transfer.web.dto.TransferPageDto;
@@ -31,6 +33,24 @@ public class AccountService {
         this.transfers = transfers;
         this.audit = audit;
         this.clock = clock;
+    }
+
+    /**
+     * Accounts owned by the caller's customer. Operators have no customer of their own to list; they must
+     * still use the per-account endpoints, which stay open to them.
+     */
+    public AccountListDto list(Actor actor, String correlationId) {
+        if (actor.isOperator()) {
+            throw new ApiException(ErrorCode.FORBIDDEN);
+        }
+        var items = accounts.findByCustomerId(actor.customerId()).stream()
+                .map(a -> {
+                    var balance = accounts.findBalance(a.id()).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
+                    return new AccountSummaryDto(a.number(), a.currency(), a.status(), scale4(balance.available()),
+                            scale4(balance.ledger()));
+                })
+                .toList();
+        return new AccountListDto(items);
     }
 
     public BalanceDto balance(Actor actor, String accountNumber, String correlationId) {

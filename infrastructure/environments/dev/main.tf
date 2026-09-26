@@ -322,3 +322,65 @@ resource "aws_instance" "database" {
 
   depends_on = [aws_iam_role_policy_attachment.ssm]
 }
+
+
+# -----------------------------------------------------------------------------
+# Keycloak Identity Provider
+# -----------------------------------------------------------------------------
+
+resource "aws_security_group" "keycloak" {
+  name        = "funds-keycloak-dev-sg"
+  description = "Security group for the Funds Transfer Keycloak identity provider"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "funds-keycloak-dev-sg"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "keycloak_from_app" {
+  security_group_id            = aws_security_group.keycloak.id
+  referenced_security_group_id = aws_security_group.app.id
+
+  from_port   = 8180
+  to_port     = 8180
+  ip_protocol = "tcp"
+
+  description = "Allow Funds Transfer application to reach Keycloak"
+}
+
+resource "aws_vpc_security_group_egress_rule" "keycloak_all" {
+  security_group_id = aws_security_group.keycloak.id
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "-1"
+
+  description = "Allow outbound access for package installation and external dependencies"
+}
+
+resource "aws_instance" "keycloak" {
+  ami                    = data.aws_ssm_parameter.al2023.value
+  instance_type          = "t3.small"
+  subnet_id              = aws_subnet.app.id
+  vpc_security_group_ids = [aws_security_group.keycloak.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  associate_public_ip_address = false
+
+  root_block_device {
+    volume_type           = "gp3"
+    volume_size           = 20
+    encrypted             = true
+    delete_on_termination = true
+  }
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+
+  tags = {
+    Name    = "funds-keycloak-dev"
+    Service = "keycloak"
+  }
+}

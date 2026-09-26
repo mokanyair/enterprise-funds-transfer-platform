@@ -15,6 +15,7 @@ public final class TestProps {
                 new FundsProperties.Idempotency(replay, lease, tombstone, Duration.ofSeconds(1), Duration.ofMinutes(2)),
                 new FundsProperties.Risk(review, reject),
                 new FundsProperties.Outbox(false, "t", 100, 10, Duration.ofSeconds(1)),
-                new FundsProperties.Jobs(true, Duration.ofSeconds(30), Duration.ofMinutes(10), 500, false));
+                new FundsProperties.Jobs(true, Duration.ofSeconds(30), Duration.ofMinutes(10), 500, false),
+                new FundsProperties.Cors(java.util.List.of()));
     }
 }

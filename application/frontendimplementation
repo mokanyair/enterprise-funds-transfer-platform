@@ -1,0 +1,707 @@
+MORGAN’S BANK
+BANKING WEB APPLICATION UI
+Complete Design, Functional Implementation & Validation Guide
+Refrence UI ![alt text](image.png)
+Frontend for the existing Java / Spring Boot / Oracle / Kafka Banking API
+Reference design direction: Haven – Web Design for Financial Platform by VALMAX
+Version 1.0 • September 2026
+ 
+Document Control
+Item	Value
+Document	NovaBank Banking Web Application UI – Design & Implementation Guide
+Purpose	Authoritative implementation blueprint for building the web UI on top of the existing banking backend API.
+Frontend	React + TypeScript + Vite
+Backend	Java / Spring Boot REST API
+Identity	Keycloak / OAuth 2.0 / OIDC / PKCE
+Data	Oracle Database
+Messaging	Kafka through transactional outbox
+Target	Desktop-first responsive web banking application
+Status	Implementation-ready design baseline
+
+How to Use This Guide
+Use this document as the implementation runbook for the frontend. Build phases in order, validate each phase against the backend contract, and do not implement financial authorization or accounting logic in the browser.
+Core rule
+The backend is authoritative for identity, ownership, balances, limits, risk decisions, transfer state, ledger postings, and final transaction outcome. The frontend collects input, invokes APIs, and renders verified backend state.
+
+Document Map
+Part	Coverage
+Part I – Architecture & UX	Objectives, reference design, architecture, design system, navigation, screens and responsive behavior.
+Part II – Functional Implementation	Frontend structure, authentication, API client, accounts, transfers, transactions, beneficiaries and state handling.
+Part III – Security, Validation & Operations	Security controls, testing, observability, CI/CD, deployment, release criteria and validation checklists.
+Appendices	Route map, API matrix, status/error matrix, test matrix, implementation checklist and references.
+
+ 
+Executive Summary
+NovaBank is a production-style retail banking web application designed to sit directly above the existing banking API. The interface adopts the restrained visual language of the supplied Haven reference while replacing marketing-oriented composition with operational banking workflows. The first release focuses on authentication, dashboard, accounts, account details, funds transfer, transaction history, transaction detail, profile and logout. Additional modules such as beneficiaries, payments, cards, statements, notifications and security controls are introduced only where matching backend services exist.
+•	Critical money movement uses a Review → Submit → Result flow.
+•	Every logical transfer carries an idempotency key to prevent duplicate processing.
+•	Pending, processing, under-review, rejected, failed and completed states are rendered from backend status—not inferred by the UI.
+•	Available balance and current balance are presented separately and never recomputed in the browser.
+•	Keycloak uses Authorization Code Flow with PKCE; no client secret is embedded in the SPA.
+•	All critical flows include negative, rollback, authorization and duplicate-submit tests.
+•	The design targets WCAG 2.2 AA and production-style browser security controls.
+ 
+PART I – ARCHITECTURE & UX DESIGN
+1. Objectives and Scope
+•	Provide a modern banking UI integrated with the existing Spring Boot REST services.
+•	Support authenticated customer access through Keycloak and JWT access tokens.
+•	Expose accounts, balances, transaction history and transfer functions safely.
+•	Provide clear operational feedback for loading, pending, success, failure and access-denied conditions.
+•	Remain responsive across desktop, tablet and mobile.
+•	Keep financial business rules and authorization on the server.
+•	Establish an implementation path that can later move from AWS VM-based lab infrastructure to Kubernetes.
+2. Visual Reference and Design Direction
+ 
+Figure 1 – Reference-inspired composition used for this guide. Original visual reference: VALMAX, “Haven – Web Design for Financial Platform,” Dribbble. https://dribbble.com/shots/26152059-Haven-Web-Design-for-Financial-Platform
+The supplied Haven reference describes a calm, trust-oriented financial experience using clean typography, bold accents and a simple visual hierarchy. This guide retains those qualities while redesigning the information architecture around real banking operations.
+Retain	Adapt for banking
+Clean typography	Use for balances, account identity, status and transaction data.
+Bold accent colors	Use for primary actions—not for every card.
+Rounded cards	Use selectively for accounts, quick actions and cards.
+Whitespace	Retain on overview screens; reduce on dense operational screens.
+Minimal visual noise	Preserve on transfer, security and confirmation pages.
+Storytelling/marketing composition	Replace with banking-specific navigation, tables, filters and state feedback.
+
+3. Design System
+Token	Value / Rule	Use
+Background	#FAFAFA	Primary application canvas
+Primary text	#080606	Headings and important financial values
+Primary accent	#FD2F02	Primary CTA and selected emphasis
+Secondary accent	#5E81B1	Secondary action, supporting chart/data
+Border	#E5E7EB	Cards, tables and inputs
+Muted text	#6B7280	Metadata and secondary labels
+Success	#15803D	Verified success only
+Warning	#D97706	Pending/warning
+Error	#B91C1C	Errors and rejected states
+Information	#2563EB	Neutral informational state
+
+Typography: Inter, Geist or Manrope may be used; select one family and apply it consistently. Recommended sizing:
+Role	Recommended size
+Page title	28–32 px
+Section title	20–24 px
+Card title	16–18 px
+Body	14–16 px
+Metadata	12–14 px
+Primary balance	30–40 px
+
+Spacing system: 8 px base unit. Buttons and interactive controls should use consistent vertical height and visible keyboard focus.
+4. Target System Architecture
+ 
+Figure 2 – Browser, identity, backend, database and messaging architecture.
+Browser / React
+   │ HTTPS
+   ├── OIDC Authorization Code + PKCE ──> Keycloak
+   │
+   └── Bearer Access Token ──────────────> Spring Boot Banking API
+                                                │
+                             ┌──────────────────┼──────────────────┐
+                             ▼                  ▼                  ▼
+                          Accounts          Transfers         Transactions
+                                                │
+                                                ▼
+                                         TransferService
+                                                │
+                                  Risk / Locks / Balances / Ledger
+                                                │
+                                                ▼
+                                              Oracle
+                                                │
+                                                ▼
+                                           OUTBOX_EVENT
+                                                │
+                                                ▼
+                                              Kafka
+5. Application Navigation
+Navigation area	Items
+Primary	Dashboard; Accounts; Transfer; Transactions; Payments; Beneficiaries; Cards; Statements; Notifications; Support; Settings
+Profile menu	Profile; Security; Trusted Devices; Login History; Preferences; Sign Out
+Mobile bottom navigation	Home; Accounts; Transfer; Transactions; More
+
+Only implemented modules should be exposed in production navigation. Do not create dead menu items for backend services that do not yet exist.
+6. Responsive Layout
+Viewport	Navigation	Layout
+Desktop > 1024 px	Persistent sidebar + top header	12-column content grid; contextual side panels permitted
+Tablet 768–1024 px	Collapsible sidebar	Single main content column with adaptive cards
+Mobile < 768 px	Bottom navigation + top bar	Single column; stacked cards; full-width forms and actions
+
+7. Reusable Component Inventory
+•	Button, IconButton, Link, Input, CurrencyInput, Select, SearchBox, DateRangePicker.
+•	AccountSelector, BeneficiarySelector, AccountCard, BalanceCard, TransactionRow.
+•	StatusBadge, Alert, Toast, EmptyState, ErrorPanel, SkeletonLoader.
+•	Modal, Drawer, ConfirmationDialog, Pagination and server-side DataTable.
+•	CurrencyDisplay, MaskedAccountNumber, CopyableReference and ReceiptPanel.
+8. Screen Inventory
+Screen	Primary purpose	Release
+Login / MFA	Authenticate customer through Keycloak	MVP
+Dashboard	Balances, accounts, recent activity, quick actions	MVP
+Accounts	List customer accounts	MVP
+Account Details	Balance and account transaction history	MVP
+Transfer	Create transfer request	MVP
+Transfer Review	Confirm source, destination, amount, reference and fee	MVP
+Transfer Result / Details	Render authoritative transfer state	MVP
+Transactions	Filter/search transaction history	MVP
+Transaction Details	View transaction metadata and status	MVP
+Beneficiaries	List/add/delete transfer recipients	Release 2
+Payments	Bill payment and scheduled payment entry point	Release 2
+Statements	Statement listing and retrieval	Release 2
+Notifications	Security/account/transaction notifications	Release 2
+Security Center	MFA, devices, login activity and security settings	Release 2
+Cards	Card controls and card information	Release 3
+
+9. Dashboard Specification
+•	Greeting and compact financial overview.
+•	Total available balance across eligible accounts if backend contract supports aggregation.
+•	Account cards showing name, masked number, currency and available balance.
+•	Quick actions: Transfer, Pay Bill, Add Beneficiary, Statements.
+•	Recent transactions with direction, amount, date and status.
+•	Optional cash-flow chart based only on server-returned aggregated data.
+Dashboard rule
+Never display a temporary $0.00 while data is loading. Use skeleton placeholders until the backend response is available.
+
+10. Accounts and Account Detail
+Field	Display rule
+Account name	Human-friendly product name
+Account number	Masked; e.g., •••• 4308
+Account type	Checking, savings, business, etc.
+Currency	ISO currency code / localized symbol
+Available balance	Backend-returned spendable amount
+Current balance	Backend-returned posted/current amount
+Status	ACTIVE, RESTRICTED, CLOSED, etc.; exact backend vocabulary
+
+Account details must support server-side transaction filters for date range, type, status, amount and free-text search.
+11. Transactions
+•	Server-side pagination; do not download and filter the entire ledger in the browser.
+•	Filters: account, date range, type, status, amount and search term.
+•	Detail page: amount, status, type, source, destination, reference, transaction ID, created time and completed time when available.
+•	Status color is supplemental; text labels remain mandatory.
+12. Funds Transfer UX
+ 
+Figure 3 – End-to-end funds transfer user and backend path.
+1.	Transfer Details – collect source account, destination/beneficiary, amount, currency and reference.
+2.	Review – show the complete transfer summary before submission.
+3.	Submit – generate/preserve an idempotency key, disable duplicate submission and call the backend.
+4.	Result – render the status returned by the backend; do not assume immediate completion.
+Frontend validation	Server validation / authority
+Required source/destination	Customer ownership and authorization
+Amount is syntactically valid and > 0	Sufficient available balance
+Source and destination differ	Account status and restrictions
+Reference length/format	Limits, fraud/risk and sanctions controls
+Currency present	Allowed currency pair / transfer type
+
+13. Transfer Status Model
+The UI must use the exact status enum exposed by the backend. A representative model is:
+SUBMITTED → PROCESSING → COMPLETED
+SUBMITTED → UNDER_REVIEW → APPROVED → PROCESSING → COMPLETED
+UNDER_REVIEW → REJECTED
+PROCESSING → FAILED
+Do not overstate a failure
+A generic UI failure message must not say “your account was not debited” unless the API contract explicitly guarantees and communicates that condition.
+
+14. Beneficiaries, Payments, Cards and Statements
+Module	Required behavior	Dependency
+Beneficiaries	List, add, delete, transfer shortcut; step-up authentication recommended for new beneficiary	Beneficiary backend endpoints
+Payments	Bill pay entry point, upcoming/scheduled payments	Payment backend endpoints
+Cards	Masked card, balance/credit, lock/unlock, limits, international/online controls, replacement	Dedicated card-service APIs
+Statements	List statements by account and period; download through authenticated API	Statement backend endpoints
+
+Do not present these modules as fully functional until matching backend APIs exist.
+15. Security Center and Profile
+•	Password management is delegated to the identity platform.
+•	Display MFA status and management entry point.
+•	Display trusted/active devices if supported by backend/identity service.
+•	Display login history and security alerts if available.
+•	Profile screens expose only data the customer is permitted to view/edit.
+•	Sensitive data remains masked by default.
+ 
+PART II – FUNCTIONAL IMPLEMENTATION
+16. Recommended Frontend Stack
+Layer	Technology	Purpose
+Framework	React	Component and application layer
+Language	TypeScript	Typed DTOs and application state
+Build	Vite	Fast build and development tooling
+Routing	React Router	Protected and nested route handling
+Server state	TanStack Query	Caching, loading/error state and controlled refetch
+Forms	React Hook Form	Efficient form state
+Validation	Zod	Schema validation for user input and API payloads
+HTTP	Axios or typed Fetch wrapper	Centralized API client
+UI	shadcn/ui + Tailwind	Accessible primitives and design system
+Icons	Lucide	Consistent iconography
+Charts	Recharts	Optional financial visualization
+Identity	Keycloak JS / OIDC client	Login, token lifecycle and logout
+Unit/component test	Vitest + React Testing Library	Frontend tests
+Browser E2E	Playwright	Critical banking workflow validation
+API mocking	MSW	Deterministic API-state testing
+
+17. Project Structure
+banking-ui/
+├── public/
+├── src/
+│   ├── app/                 # router, providers, query client
+│   ├── api/                 # typed API clients
+│   ├── auth/                # Keycloak/OIDC integration
+│   ├── components/          # reusable visual components
+│   ├── features/
+│   │   ├── dashboard/
+│   │   ├── accounts/
+│   │   ├── transfers/
+│   │   ├── transactions/
+│   │   ├── beneficiaries/
+│   │   ├── payments/
+│   │   ├── cards/
+│   │   ├── statements/
+│   │   └── security/
+│   ├── hooks/
+│   ├── types/
+│   ├── utils/
+│   ├── constants/
+│   └── styles/
+├── .env
+├── package.json
+└── vite.config.ts
+18. Authentication and Session Architecture
+Browser
+  ↓
+Keycloak Login
+  ↓
+Authorization Code Flow + PKCE
+  ↓
+Access Token
+  ↓
+React API Client
+  ↓
+Authorization: Bearer <access-token>
+  ↓
+Spring Boot Resource Server
+•	Use a public SPA client; do not embed a client secret.
+•	Do not build a custom password form that posts credentials directly to the banking API.
+•	Prefer in-memory/session-managed token handling through the OIDC client rather than long-lived localStorage.
+•	Define idle timeout, absolute session timeout, token renewal, logout and step-up authentication behavior.
+•	A future Backend-for-Frontend pattern may move browser session state to secure HTTP-only cookies.
+19. Environment Configuration
+VITE_API_URL=https://api.dev.example.com
+VITE_KEYCLOAK_URL=https://auth.dev.example.com
+VITE_KEYCLOAK_REALM=banking
+VITE_KEYCLOAK_CLIENT_ID=banking-web
+No client secret, database credential, API key or signing key belongs in a Vite environment variable delivered to the browser.
+20. Typed API Contract Layer
+interface Account {
+  accountId: string;
+  accountNumberMasked: string;
+  accountType: string;
+  currency: string;
+  availableBalance: number;
+  currentBalance: number;
+  status: string;
+}
+
+interface TransferRequest {
+  sourceAccountId: string;
+  destinationAccountId: string;
+  amount: number;
+  currency: string;
+  reference?: string;
+}
+
+interface TransferResponse {
+  transferId: string;
+  status: TransferStatus;
+  amount: number;
+  currency: string;
+  createdAt: string;
+}
+Contract validation
+Before coding each feature, compare its TypeScript model against the backend DTO / OpenAPI contract. Do not hand-invent field names or enums.
+
+21. API Client Behavior
+•	Single base URL from environment configuration.
+•	Attach current bearer token to authenticated requests.
+•	Attach or preserve X-Correlation-ID where supported.
+•	Never log Authorization headers or raw access tokens.
+•	Normalize safe API errors into a common UI error model.
+•	Do not automatically retry POST transfer requests unless the same logical operation preserves the same idempotency key.
+22. HTTP and Error Handling
+HTTP	Expected UI behavior
+200	Render successful response
+201	Render newly created resource
+202	Render pending/processing state
+400	Show safe request validation errors
+401	Reauthenticate / session-expired flow
+403	Access denied; do not leak resource data
+404	Resource not found or no longer available
+409	Conflict / idempotency / concurrent state conflict
+422	Business validation such as insufficient funds when backend uses 422
+429	Rate-limited; explain retry behavior
+500	Generic service error with correlation/reference ID
+503	Service temporarily unavailable
+
+The exact status-code contract must be verified against the implemented backend before release.
+23. Recommended Backend Error Contract
+{
+  "timestamp": "2026-09-25T14:15:00Z",
+  "status": 422,
+  "code": "INSUFFICIENT_FUNDS",
+  "message": "Insufficient available balance",
+  "correlationId": "87ed..."
+}
+Use machine-readable code for UI branching and a backend-approved message for user-visible text. Never expose Oracle errors, Java stack traces or internal class names.
+24. Money and Currency Rules
+•	Do not recompute authoritative balances in JavaScript.
+•	Use backend-returned monetary values and explicit currency codes.
+•	Use Intl.NumberFormat for localized display.
+•	Avoid floating-point business calculations in the UI.
+•	The backend remains authoritative for fees, exchange rates, rounding and settlement values.
+25. Idempotency and Duplicate Submission
+Generate a unique identifier for the logical transfer before the POST and preserve it until the final outcome is known.
+const idempotencyKey = crypto.randomUUID();
+
+POST /api/v1/transfers
+Authorization: Bearer <JWT>
+Idempotency-Key: <same key for the same logical attempt>
+•	Disable the Confirm Transfer button immediately after submit.
+•	Show a processing state.
+•	Do not generate a new idempotency key for an automatic retry of the same logical transfer.
+•	If the browser loses the response, query the transfer by returned/known reference where supported before encouraging another submit.
+26. Existing Backend Transfer Integration
+POST /api/v1/transfers
+      ↓
+TransfersController.create(...)
+      ↓
+CreateTransferRequest
+      ↓
+TransferService
+      ↓
+Authentication / ownership validation
+      ↓
+Idempotency lookup
+      ↓
+Risk decision
+      ↓
+Transaction boundary
+      ↓
+Account locks
+      ↓
+Balance validation
+      ↓
+Debit source
+      ↓
+Credit destination
+      ↓
+Ledger entries
+      ↓
+Transfer record
+      ↓
+Outbox event
+      ↓
+Commit
+      ↓
+HTTP response
+The exact method names and status enums in the codebase are authoritative. This sequence documents the integration responsibility the frontend must respect.
+27. Transaction Failure and Rollback
+Source debit succeeds in current DB transaction
+         ↓
+Destination credit fails
+         ↓
+Exception
+         ↓
+Database transaction rollback
+         ↓
+Source debit rolled back
+Ledger writes rolled back
+Transfer/outbox writes rolled back (if in same transaction)
+The frontend must show the backend failure state; it never attempts balance repair or compensating SQL.
+28. Server-Side Search and Pagination
+GET /api/v1/transactions?page=0&size=25&accountId=...&status=...&fromDate=...&toDate=...
+•	Use backend pagination metadata for next/previous controls.
+•	Debounce free-text search where appropriate.
+•	Preserve filters in route query parameters for usability where no sensitive data is exposed.
+•	Never place tokens, full account numbers or secret data in URLs.
+29. Route Map
+Route	Purpose	Authentication
+/dashboard	Overview	Required
+/accounts	Account list	Required
+/accounts/:accountId	Account detail	Required
+/transfers/new	Transfer form	Required
+/transfers/:transferId	Transfer status/detail	Required
+/transactions	Transaction history	Required
+/transactions/:transactionId	Transaction detail	Required
+/beneficiaries	Beneficiaries	Required
+/payments	Payments	Required
+/cards	Cards	Required
+/statements	Statements	Required
+/notifications	Notifications	Required
+/profile	Profile	Required
+/security	Security center	Required
+/support	Support	Usually required or limited public content
+
+30. Application Loading and Empty States
+State	Required behavior
+Loading	Skeleton; do not display fake zero balances
+Empty	Explain no data and provide appropriate next action
+Error	Safe message + retry where safe
+Unauthorized	Reauthenticate or access denied
+Offline	Explain connectivity issue; do not pretend transfer completed
+Pending	Show current backend state and avoid duplicate submission
+Success	Show verified outcome + reference/receipt action
+
+PART III – SECURITY, VALIDATION & OPERATIONS
+31. Frontend Security Requirements
+•	Never store passwords.
+•	Never embed application secrets in the SPA.
+•	Mask account/card identifiers by default.
+•	Never trust account IDs, role claims or balances submitted by the browser without server validation.
+•	Do not determine authorization, transfer limits, risk approval or final transaction result in React.
+•	Do not log access tokens, refresh tokens, credentials or full account numbers.
+•	Do not expose database IDs where a safer public identifier is available.
+•	Sanitize/escape user-controlled content; do not inject arbitrary HTML.
+•	Require HTTPS in all non-local environments.
+•	Use explicit confirmation for destructive or high-risk actions.
+32. Browser and Edge Security Controls
+Control	Requirement
+CSP	Restrict script, frame, image, connection and style origins; remove unsafe allowances where possible.
+HSTS	Enforce HTTPS after secure deployment is established.
+X-Content-Type-Options	nosniff
+Referrer-Policy	Use a restrictive policy appropriate for the deployment.
+Permissions-Policy	Disable browser capabilities not required by the application.
+CORS	Allow only approved frontend origins for authenticated banking APIs.
+TLS	HTTPS only; modern protocol/cipher policy managed at edge/load balancer.
+
+33. Authorization Model
+The UI may hide or disable actions based on roles/claims such as CUSTOMER, SUPPORT or ADMIN, but this is only a presentation convenience. Every backend endpoint must independently enforce authorization and customer/resource ownership.
+34. Accessibility
+•	Target WCAG 2.2 AA.
+•	Full keyboard navigation and visible focus states.
+•	Explicit form labels and programmatic association of error messages with fields.
+•	Screen-reader announcement for transfer status changes.
+•	Color is never the only indication of success, pending or failure.
+•	Mobile touch targets should be large enough for reliable use.
+•	Logical heading hierarchy and semantic tables.
+•	Support browser zoom and reflow.
+35. Testing Strategy
+Layer	Tools	Coverage
+Unit	Vitest	Formatting, schemas, status mapping, helpers
+Component	React Testing Library	Forms, cards, badges, errors, accessibility behavior
+API-mocked integration	MSW	Success, pending, insufficient funds, 401/403, duplicate/idempotency, timeout
+Browser E2E	Playwright	Login → account → transfer → confirmation → transaction verification
+Backend integration	Postman/curl + DB queries	Balances, ledger, transfer record, outbox and rollback
+Security	Automated + manual	Authorization, session expiry, XSS, CSP/CORS, dependency findings
+
+36. Critical End-to-End Test Cases
+Scenario	Expected result
+Successful internal transfer	Backend commits balances, ledger, transfer and outbox; UI shows verified status.
+Insufficient funds	No unauthorized debit; safe business error shown.
+Same source/destination	Rejected according to backend validation.
+Unauthorized source account	403/secure denial; no account data leaked.
+Duplicate submit	Same idempotency key returns same logical result; no duplicate money movement.
+Expired token	Reauthentication/session flow; no transaction submitted with invalid session.
+Risk review	UI shows UNDER_REVIEW/PENDING rather than success.
+Risk rejection	UI shows rejected state and safe reason if supplied.
+API timeout after submit	Do not blindly resubmit; reconcile using transfer/status lookup when available.
+Second balance update fails	Database rolls back; no partial success exposed.
+Kafka unavailable	Transfer behavior follows outbox design; DB commit must not depend on direct Kafka publish if outbox pattern is correctly implemented.
+
+37. Database Consistency Validation
+For an internal transfer of 100 from A=1000 to B=500:
+Validation	Expected
+Source available/current balance	Reduced according to backend rules
+Destination balance	Increased according to backend rules
+Version columns	Incremented where optimistic concurrency/versioning is used
+Transfer row	Created once
+Ledger	Balanced debit and credit entries
+Outbox	One committed event for the transfer
+UI	Matches backend transfer and account state after refresh/requery
+
+38. Observability
+•	Capture frontend navigation timing, API latency, HTTP status and JavaScript exceptions.
+•	Propagate/record correlation IDs so a failed UI operation can be traced through API logs.
+•	Do not record sensitive form values, tokens, passwords or full account numbers.
+•	Use backend metrics/logs for transfer latency, error codes, DB transaction failures and outbox publication.
+39. CI/CD
+ 
+Figure 4 – Recommended frontend delivery pipeline.
+•	PR validation: install, lint, type-check, unit/component tests and build.
+•	Dependency/SCA scan before deployment.
+•	Deploy immutable frontend artifact to development.
+•	Run Playwright E2E against development API/identity environment.
+•	Require approval for production promotion.
+•	Retain build metadata/version for troubleshooting and rollback.
+40. AWS Lab Deployment
+User
+  │
+  ▼
+CloudFront
+  │
+  ▼
+S3 static React build
+  │ HTTPS
+  ▼
+Application Load Balancer
+  │
+  ▼
+Spring Boot API on EC2
+  │
+  ├── Oracle
+  └── Kafka
+
+Identity: Keycloak reachable through protected HTTPS endpoint
+
+DNS example:
+  bank.dev.example.com
+  api.dev.example.com
+  auth.dev.example.com
+For a future Kubernetes version, the same frontend can be delivered through CDN/object storage or through a web container; backend services can move to Kubernetes without changing the UI domain model if API contracts remain stable.
+41. Performance Targets
+Area	Target / guidance
+Initial usable page	Aim for < 3 seconds in lab conditions; measure rather than assume
+Common API response	Prefer < 1 second where backend workload permits
+Perceived local interaction	~200 ms for controls not waiting on network
+Transactions	Server-side pagination
+Routing	Lazy-load feature bundles
+Dashboard	Parallelize independent GETs; avoid duplicate requests
+Images/icons	Optimize and cache static assets
+
+42. Implementation Phases
+Phase	Scope	Exit criteria
+0	Backend contract verification	OpenAPI/DTO/status/error/auth/pagination/CORS contract documented
+1	Frontend foundation	React/TS/Vite project, lint, test and build working
+2	Design system	Reusable accessible UI primitives complete
+3	Application shell	Desktop/tablet/mobile navigation working
+4	Authentication	Keycloak login/logout/renewal/protected routes validated
+5	Dashboard	Accounts + recent activity rendered from APIs
+6	Accounts	Account list/detail + server-side transactions
+7	Transfers	Form, review, idempotency, POST, status/result complete
+8	Transactions	History, filters, pagination and detail complete
+9	Beneficiaries	Only after endpoint contract exists
+10	Additional modules	Payments, statements, notifications, security, cards as backend supports
+11	E2E validation	Browser → Keycloak → API → Oracle → Kafka tested
+12	Security hardening	Headers, CORS, session, dependency and auth tests pass
+13	Deployment	DNS/TLS/config/monitoring/release validation complete
+
+43. Recommended Implementation Order
+1. Verify backend endpoint and DTO contracts.
+2. Scaffold React + TypeScript project.
+3. Build design tokens and reusable components.
+4. Build shell and responsive navigation.
+5. Integrate Keycloak/OIDC.
+6. Integrate accounts API.
+7. Build dashboard.
+8. Build account details and transaction retrieval.
+9. Build transfer form and review screen.
+10. Implement idempotent transfer submission.
+11. Validate transfer against Oracle balances, ledger and outbox.
+12. Build transaction history/detail.
+13. Add consistent error/loading/offline states.
+14. Add beneficiaries and other modules only when backend endpoints exist.
+15. Run security, negative and rollback tests.
+16. Build CI/CD and deploy.
+17. Complete production-style validation and sign-off.
+44. Release Scope
+Release	Features
+MVP	Login/MFA, Dashboard, Accounts, Account Detail, Transfer, Review, Result/Status, Transactions, Transaction Detail, Profile, Logout
+Release 2	Beneficiaries, Payments, Statements, Notifications, Security Center
+Release 3	Cards, Scheduled/Recurring transfers, External accounts, Advanced alerts and analytics
+
+45. Definition of Done
+•	UI matches approved visual tokens and responsive layouts.
+•	All implemented screens have loading, empty, error and unauthorized states.
+•	Authentication and protected routes function correctly.
+•	API DTOs and enums match the backend contract.
+•	Transfer uses review, idempotency and authoritative status rendering.
+•	Duplicate-submit, timeout and rollback tests pass.
+•	Balances, ledger and outbox are verified for successful and failed transfer scenarios.
+•	Accessibility review meets project WCAG target.
+•	No tokens/secrets/full account identifiers appear in logs or static frontend build.
+•	CI pipeline, E2E tests, deployment and rollback process are documented and repeatable.
+ 
+APPENDIX A – API INTEGRATION MATRIX
+UI	API / contract	Notes
+Dashboard	GET /api/v1/accounts; GET /api/v1/transactions?limit=5	Or add a dashboard aggregation endpoint only when justified.
+Accounts	GET /api/v1/accounts	Customer-scoped list.
+Account detail	GET /api/v1/accounts/{id}	Backend enforces ownership.
+Account activity	GET /api/v1/accounts/{id}/transactions or transaction query	Server-side filters/pagination.
+Transfer	POST /api/v1/transfers	JWT + Idempotency-Key.
+Transfer detail	GET /api/v1/transfers/{id}	Required/recommended for reconciliation and status refresh.
+Transactions	GET /api/v1/transactions	Paginated/filterable.
+Transaction detail	GET /api/v1/transactions/{id}	Customer-scoped.
+Beneficiaries	TBD	Implement only after backend contract is defined.
+Statements	TBD / accounts/{id}/statements	Authenticated retrieval.
+Cards	TBD	Dedicated service required.
+Payments	TBD	Dedicated payment contract required.
+
+APPENDIX B – BACKEND REFERENCES TO PRESERVE
+•	TransfersController and exact create/submit method.
+•	CreateTransferRequest DTO.
+•	TransferService orchestration.
+•	Authentication/customer ownership validation.
+•	Idempotency lookup and persisted idempotency semantics.
+•	Risk-approved / under-review branch.
+•	Database transaction boundary.
+•	Source/destination account locking strategy.
+•	ACCOUNT_BALANCES and version/concurrency logic.
+•	Transfer records and status enum.
+•	Balanced ledger entries.
+•	OUTBOX_EVENT insert and Kafka publication path.
+•	Keycloak subject mapping through APP_USERS.IDP_SUBJECT or current equivalent.
+•	Correlation/audit identifiers.
+APPENDIX C – VALIDATION CHECKLIST
+☐  Reference design direction approved.
+☐  Color and typography tokens implemented.
+☐  Responsive shell validated at mobile/tablet/desktop widths.
+☐  Keycloak redirect URIs and web origins correct.
+☐  OIDC PKCE enabled.
+☐  No client secret in SPA.
+☐  Protected routes require authenticated session.
+☐  Account numbers masked.
+☐  Current vs available balances correctly labeled.
+☐  Dashboard never flashes false zero balances.
+☐  Transfer review occurs before POST.
+☐  Idempotency key generated once per logical transfer.
+☐  Confirm button disables after submit.
+☐  Transfer status rendered from backend.
+☐  401/403/409/422/429/500/503 behaviors tested.
+☐  API timeout after submit does not cause blind duplicate submission.
+☐  Successful transfer reconciles balances, ledger and outbox.
+☐  Second balance update failure rolls back cleanly.
+☐  Transaction filters and pagination are server-side.
+☐  CORS restricted to approved origins.
+☐  CSP and security headers configured.
+☐  Sensitive data excluded from frontend telemetry.
+☐  Playwright critical path passes.
+☐  Dependency scan passes release threshold.
+☐  Deployment over HTTPS validated.
+☐  Operational support has correlation/reference IDs for failures.
+APPENDIX D – REFERENCE SOURCES
+Haven – Web Design for Financial Platform, VALMAX, Dribbble – https://dribbble.com/shots/26152059-Haven-Web-Design-for-Financial-Platform
+React Documentation – https://react.dev/
+TypeScript Documentation – https://www.typescriptlang.org/docs/
+Vite Documentation – https://vite.dev/guide/
+TanStack Query Documentation – https://tanstack.com/query/latest
+React Hook Form – https://react-hook-form.com/
+Zod – https://zod.dev/
+Keycloak Documentation – https://www.keycloak.org/documentation
+OAuth 2.0 for Browser-Based Apps (IETF work / current guidance) – https://datatracker.ietf.org/doc/html/draft-ietf-oauth-browser-based-apps
+RFC 7636 – Proof Key for Code Exchange (PKCE) – https://www.rfc-editor.org/rfc/rfc7636
+OWASP Application Security Verification Standard – https://owasp.org/www-project-application-security-verification-standard/
+OWASP Cheat Sheet Series – https://cheatsheetseries.owasp.org/
+W3C Web Content Accessibility Guidelines (WCAG) 2.2 – https://www.w3.org/TR/WCAG22/
+Spring Security Documentation – https://docs.spring.io/spring-security/reference/
+Apache Kafka Documentation – https://kafka.apache.org/documentation/
+Oracle Database Documentation – https://docs.oracle.com/en/database/
+APPENDIX E – DESIGN REVIEW FINDINGS
+Issue identified in initial concept	Correction in this guide
+Assumed transfer could immediately be completed	Explicit async/pending/review/processing states.
+Failure text overstated balance safety	UI only communicates guarantees returned by backend.
+Token storage was underspecified	OIDC Authorization Code + PKCE and safer token lifecycle defined.
+Beneficiary flow lacked step-up security	MFA/step-up recommended for new beneficiary.
+API errors were vague	Common error contract and HTTP behavior defined.
+Duplicate-submit handling not fully defined	Idempotency lifecycle and retry rules documented.
+Cards/payments looked like existing functions	Marked as dependent on dedicated backend APIs.
+No correlation/tracing guidance	Correlation IDs and telemetry boundaries added.
+No full negative test matrix	Timeout, duplicate, authorization, risk and rollback paths included.
+Deployment was incomplete	AWS edge/frontend/API/identity deployment path added.
+
+ 
+Implementation Baseline Approval
+This document is the recommended baseline for building the NovaBank web UI on top of the existing banking backend. Before implementation begins, Phase 0 must verify the live backend endpoint paths, DTO field names, enums, authentication claims, error schema and transfer status semantics. Any difference found in the actual backend contract takes precedence over example endpoint names in this guide.
+Recommended first implementation milestone
+Complete Phase 0 through Phase 7: backend contract verification, frontend foundation, design system, application shell, Keycloak integration, dashboard/accounts and the complete idempotent transfer workflow. Validate the transfer end to end against Oracle ledger/balance/outbox evidence before adding secondary modules.
+

@@ -48,6 +48,13 @@ public class AccountRepository {
         return rows.stream().findFirst();
     }
 
+    /** Backs GET /accounts. Deterministic order so pages/tests are stable. */
+    public List<AccountRow> findByCustomerId(UUID customerId) {
+        return jdbc.query(
+                "SELECT " + ACCOUNT_COLUMNS + " FROM ACCOUNTS WHERE CUSTOMER_ID = :id ORDER BY ACCOUNT_NUMBER",
+                JdbcSupport.id(JdbcSupport.params(), "id", customerId), ACCOUNT);
+    }
+
     /** Unlocked read for the balance endpoint. */
     public Optional<BalanceRow> findBalance(UUID accountId) {
         List<BalanceRow> rows = jdbc.query(

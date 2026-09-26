@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Funds Transfer API - Accounts
-  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  version: 1.1.0   # keep equal to the root spec (funds-transfer-v1.yaml)
   description: |
     Account-scoped reads: balance and per-account transfer history. Owns the
     `Balance` schema and the ownership/404 rule for accounts. The history
@@ -13,6 +13,38 @@ security:
   - bearerAuth: []
 
 paths:
+  /accounts:
+    get:
+      operationId: listAccounts
+      tags: [accounts]
+      summary: List the caller's accounts
+      x-authorization: CUSTOMER only. Operators have no customer of their own to list and get 403.
+      description: |
+        All accounts owned by the caller's customer, ordered by account number. There is no
+        pagination: a retail customer's account count is small. Each row carries the same
+        balance fields as `GET /accounts/{accountId}/balance` so the UI can render a list
+        without an extra request per account.
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The caller's accounts.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountList' }
+              example:
+                accounts:
+                  - accountId: ACC001
+                    currency: USD
+                    status: ACTIVE
+                    availableBalance: "1250.0000"
+                    ledgerBalance: "1250.0000"
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
   /accounts/{accountId}/balance:
     get:
       operationId: getAccountBalance
@@ -126,3 +158,21 @@ components:
         availableBalance: { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
         ledgerBalance:    { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
         asOf:             { type: string, format: date-time }
+
+    AccountSummary:
+      type: object
+      required: [accountId, currency, status, availableBalance, ledgerBalance]
+      properties:
+        accountId:        { type: string }
+        currency:         { type: string, minLength: 3, maxLength: 3 }
+        status:           { type: string, enum: [ACTIVE, FROZEN, CLOSED] }
+        availableBalance: { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        ledgerBalance:    { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+
+    AccountList:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items: { $ref: '#/components/schemas/AccountSummary' }

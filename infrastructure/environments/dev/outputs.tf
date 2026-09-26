@@ -29,3 +29,14 @@ output "database_private_ip" {
 output "nat_gateway_id" {
   value = aws_nat_gateway.main.id
 }
+
+
+output "keycloak_instance_id" {
+  description = "Keycloak EC2 instance ID"
+  value       = aws_instance.keycloak.id
+}
+
+output "keycloak_private_ip" {
+  description = "Private IP address of the Keycloak EC2 instance"
+  value       = aws_instance.keycloak.private_ip
+}

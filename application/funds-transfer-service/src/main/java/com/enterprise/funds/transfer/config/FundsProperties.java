@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
@@ -18,7 +19,8 @@ public record FundsProperties(
         @DefaultValue Idempotency idempotency,
         @DefaultValue Risk risk,
         @DefaultValue Outbox outbox,
-        @DefaultValue Jobs jobs) {
+        @DefaultValue Jobs jobs,
+        @DefaultValue Cors cors) {
 
     public record Db(@DefaultValue("5") @Min(1) @Max(60) int lockWaitSeconds) {}
 
@@ -46,4 +48,11 @@ public record FundsProperties(
             @DefaultValue("10m") @NotNull Duration purgeInterval,
             @DefaultValue("500") @Min(1) int purgeBatch,
             @DefaultValue("false") boolean anomalyChecks) {}
+
+    /** Empty by default: no browser origin is allowed to call the API until one is explicitly configured. */
+    public record Cors(List<String> allowedOrigins) {
+        public List<String> allowedOriginsOrEmpty() {
+            return allowedOrigins == null ? List.of() : allowedOrigins;
+        }
+    }
 }

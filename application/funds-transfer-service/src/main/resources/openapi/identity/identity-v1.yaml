@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Funds Transfer API - Identity
-  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  version: 1.1.0   # keep equal to the root spec (funds-transfer-v1.yaml)
   description: |
     Authentication and authorization contract. V1 exposes **no identity
     endpoints**: users and customers are provisioned outside V1 (decision D2),

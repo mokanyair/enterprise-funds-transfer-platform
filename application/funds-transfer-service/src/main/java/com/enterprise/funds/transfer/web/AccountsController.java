@@ -3,6 +3,7 @@ package com.enterprise.funds.transfer.web;
 import com.enterprise.funds.transfer.domain.Actor;
 import com.enterprise.funds.transfer.domain.TransferStatus;
 import com.enterprise.funds.transfer.service.AccountService;
+import com.enterprise.funds.transfer.web.dto.AccountListDto;
 import com.enterprise.funds.transfer.web.dto.BalanceDto;
 import com.enterprise.funds.transfer.web.dto.TransferPageDto;
 import jakarta.validation.constraints.Max;
@@ -17,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Implements openapi/accounts/accounts-v1.yaml. */
 @RestController
-@RequestMapping(path = "/api/v1/accounts/{accountId}", produces = MediaType.APPLICATION_JSON_VALUE)
+@RequestMapping(path = "/api/v1/accounts", produces = MediaType.APPLICATION_JSON_VALUE)
 public class AccountsController {
 
     private static final String ACCOUNT_ID = "^[A-Za-z0-9_-]{1,32}$";
@@ -28,12 +29,17 @@ public class AccountsController {
         this.accounts = accounts;
     }
 
-    @GetMapping("/balance")
+    @GetMapping
+    public AccountListDto list(Actor actor) {
+        return accounts.list(actor, CorrelationIdFilter.current());
+    }
+
+    @GetMapping("/{accountId}/balance")
     public BalanceDto balance(Actor actor, @PathVariable @Pattern(regexp = ACCOUNT_ID) String accountId) {
         return accounts.balance(actor, accountId, CorrelationIdFilter.current());
     }
 
-    @GetMapping("/transfers")
+    @GetMapping("/{accountId}/transfers")
     public TransferPageDto history(
             Actor actor,
             @PathVariable @Pattern(regexp = ACCOUNT_ID) String accountId,
