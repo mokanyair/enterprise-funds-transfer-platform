@@ -77,3 +77,5 @@ funds:
     purge-interval: 10m
     purge-batch: 500
     anomaly-checks: false
+  cors:
+    allowed-origins: ${FUNDS_CORS_ALLOWED_ORIGINS:}

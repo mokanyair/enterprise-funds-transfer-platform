@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.enterprise.funds.transfer.config.FundsProperties;
 import com.enterprise.funds.transfer.domain.Actor;
 import com.enterprise.funds.transfer.domain.ApiException;
 import com.enterprise.funds.transfer.domain.ErrorCode;
@@ -26,6 +27,8 @@ import com.enterprise.funds.transfer.security.SecurityConfig;
 import com.enterprise.funds.transfer.service.AccountService;
 import com.enterprise.funds.transfer.service.TransferService;
 import com.enterprise.funds.transfer.service.TransferService.CreateOutcome;
+import com.enterprise.funds.transfer.web.dto.AccountListDto;
+import com.enterprise.funds.transfer.web.dto.AccountSummaryDto;
 import com.enterprise.funds.transfer.web.dto.BalanceDto;
 import com.enterprise.funds.transfer.web.dto.TransferDto;
 import com.enterprise.funds.transfer.web.dto.TransferPageDto;
@@ -37,6 +40,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -54,6 +58,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 @WebMvcTest(controllers = {TransfersController.class, AccountsController.class})
 @Import({SecurityConfig.class, GlobalExceptionHandler.class, ErrorFactory.class, CorrelationIdFilter.class,
         WebConfig.class, ActorResolver.class, WebLayerTest.TestBeans.class})
+@EnableConfigurationProperties(FundsProperties.class) // SecurityConfig's CORS bean needs funds.cors.allowed-origins
 @TestPropertySource(properties = {
         "FUNDS_DB_URL=jdbc:none", "FUNDS_DB_USER=x", "FUNDS_DB_PASSWORD=x",
         "FUNDS_JWT_ISSUER_URI=https://issuer.invalid/"})
@@ -272,6 +277,24 @@ class WebLayerTest {
     }
 
     // ---- reads
+
+    @Test
+    void listReturnsTheCallersAccounts() throws Exception {
+        when(accounts.list(any(), anyString())).thenReturn(new AccountListDto(
+                List.of(new AccountSummaryDto("ACC001", "USD", "ACTIVE", "1250.0000", "1250.0000"))));
+        mvc.perform(get("/api/v1/accounts").with(asUser())).andExpect(status().isOk())
+                .andExpect(header().exists("X-Correlation-Id"))
+                .andExpect(jsonPath("$.accounts", hasSize(1)))
+                .andExpect(jsonPath("$.accounts[0].accountId").value("ACC001"))
+                .andExpect(jsonPath("$.accounts[0].status").value("ACTIVE"));
+    }
+
+    @Test
+    void listIsForbiddenForOperators() throws Exception {
+        when(accounts.list(any(), anyString())).thenThrow(new ApiException(ErrorCode.FORBIDDEN));
+        mvc.perform(get("/api/v1/accounts").with(asUser())).andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
 
     @Test
     void balanceMatchesTheContractShape() throws Exception {

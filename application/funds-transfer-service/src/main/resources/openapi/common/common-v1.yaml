@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Funds Transfer API - Common
-  version: 1.0.2   # keep equal to the root spec (funds-transfer-v1.yaml)
+  version: 1.1.0   # keep equal to the root spec (funds-transfer-v1.yaml)
   description: |
     Shared building blocks used by every domain spec: money and account-ID
     types, the error model and closed `ErrorCode` set, the correlation-ID
