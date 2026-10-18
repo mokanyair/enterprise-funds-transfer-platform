@@ -8,12 +8,14 @@ Implements the approved contract in `src/main/resources/openapi/` and the design
 | Area | State |
 |------|-------|
 | Compiles, packages | Yes (JDK 21) |
-| 83 unit and web-layer tests | **Pass** |
-| 19 Oracle integration tests (`*IT`) | Written, **never run** (they need a database; they skip themselves) |
-| SQL in the repositories, the V1-V6 migrations | **Never executed against Oracle** since the last edits |
+| 155 unit and web-layer tests | **Pass** (JDK 21, 2026-10-18) |
+| 32 integration tests (`PostingIT` 14, `BeneficiaryIT` 9, `PrivilegeIT` 5, `EventPipelineIT` 4) | **Pass** on a **disposable** Oracle Free 23.26 container plus a single-node Kafka 3.9.1 broker (2026-10-18), runtime identity with the section 5 grants. They skip themselves without a database (`EventPipelineIT` also needs `FUNDS_IT_KAFKA_BOOTSTRAP_SERVERS`) |
+| V1-V10 migrations | Apply cleanly with `flyway migrate` / `validate` on the same kind of disposable container |
+| Kafka | Publisher and notification consumer implemented, both **off by default**; see `docs/release-2-event-streaming.md` |
+| `bank-db-01` | Nothing has run there yet: migrations, grants and ITs are still to do |
 | Application start-up | Not attempted (needs a database and an identity provider) |
 
-Treat the persistence layer as untested until the integration tests have passed once.
+The integration tests have now passed once, on a throwaway database. Repeat them against `bank-db-01` (or a clone of it) before relying on them there.
 
 ## Build and test
 
@@ -47,7 +49,8 @@ lease, tombstone retention, risk thresholds, outbox publisher, background jobs. 
 |-----------------|------|
 | `POST /api/v1/transfers` (needs `Idempotency-Key`) | `openapi/transfers/transfers-v1.yaml` |
 | `GET /api/v1/transfers/{id}`, `POST /api/v1/transfers/{id}/cancel` | same |
-| `GET /api/v1/accounts/{id}/balance`, `GET /api/v1/accounts/{id}/transfers` | `openapi/accounts/accounts-v1.yaml` |
+| `GET /api/v1/accounts`, `GET /api/v1/accounts/{id}/balance`, `GET /api/v1/accounts/{id}/transfers` | `openapi/accounts/accounts-v1.yaml` |
+| `GET`/`POST /api/v1/beneficiaries`, `GET`/`DELETE /api/v1/beneficiaries/{id}` (Release 2) | `openapi/beneficiaries/beneficiaries-v1.yaml` |
 | `GET /actuator/health` | no token needed |
 
 ## How it fits together
@@ -56,7 +59,7 @@ lease, tombstone retention, risk thresholds, outbox publisher, background jobs. 
 web/        controllers, error body, correlation-id filter          thin: no business rules
 security/   verified token subject -> APP_USERS -> Actor             identity is never client-supplied
 service/    TransferService (create/get/cancel), IdempotencyService, PostingService (the only place money moves),
-            LimitEvaluator, AccountService, ReviewService
+            LimitEvaluator, AccountService, ReviewService, BeneficiaryService (Release 2)
 persistence/ plain JDBC repositories (RAW(16) ids, UUIDv7)
 jobs/       idempotency reconciler + body purge, outbox publisher (Kafka, off by default)
 domain/     state machine, error codes, currency policy

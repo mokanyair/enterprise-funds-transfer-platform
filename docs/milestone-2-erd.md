@@ -2,6 +2,8 @@
 
 Status: **Design decisions P1-P9 APPROVED (2026-09-18).** Migrations V1-V6 written; see section 9 for test status.
 Builds on the approved contract in `docs/milestone-1-contract.md`.
+**Release 2:** `BENEFICIARIES` (13th table, migration V7) added per `docs/release-2-beneficiaries-contract.md` (B1-B8 approved 2026-10-18). Physical design in section 12.
+**Release 2, event streaming:** V8 generalises `OUTBOX_EVENTS`, V9 adds `NOTIFICATIONS` (14th table). Section 13 and `docs/release-2-event-streaming.md`.
 
 Already decided: UUID storage is `RAW(16)` everywhere (approved 2026-09-18).
 
@@ -42,6 +44,10 @@ erDiagram
     TRANSFERS ||--o{ OUTBOX_EVENTS : "publishes"
     TRANSFERS ||--o{ RECONCILIATION_RECORDS : "reconciled in"
     TRANSFERS |o--o| TRANSFERS : "reversal_of"
+    CUSTOMERS ||--o{ BENEFICIARIES : "saves (R2)"
+    ACCOUNTS  ||--o{ BENEFICIARIES : "saved as (R2)"
+    APP_USERS ||--o{ BENEFICIARIES : "created / deleted by (R2)"
+    CUSTOMERS ||--o{ NOTIFICATIONS : "receives (R2)"
 
     CUSTOMERS {
         RAW16 customer_id PK
@@ -107,9 +113,18 @@ erDiagram
     }
     OUTBOX_EVENTS {
         RAW16 event_id PK
-        RAW16 transfer_id FK
+        VARCHAR2 aggregate_type "V8"
+        RAW16 aggregate_id "V8"
+        RAW16 transfer_id FK "null unless TRANSFER (V8)"
         VARCHAR2 status
         NUMBER attempts
+    }
+    NOTIFICATIONS {
+        RAW16 notification_id PK
+        RAW16 customer_id FK
+        VARCHAR2 type
+        RAW16 source_event_id "UK with customer_id"
+        TIMESTAMP read_at "nullable"
     }
     AUDIT_EVENTS {
         RAW16 audit_id PK
@@ -123,6 +138,15 @@ erDiagram
         RAW16 run_id
         RAW16 transfer_id FK
         VARCHAR2 status
+    }
+    BENEFICIARIES {
+        RAW16 beneficiary_id PK
+        RAW16 customer_id FK
+        RAW16 account_id FK "UK with customer_id while ACTIVE"
+        VARCHAR2 nickname
+        VARCHAR2 status "ACTIVE or DELETED"
+        RAW16 created_by_user_id FK
+        RAW16 deleted_by_user_id FK "nullable"
     }
 ```
 
@@ -138,6 +162,7 @@ Cardinality check against the approved contract:
 | Transfer -> Risk / Audit / Outbox 1:N | FKs (audit references the entity by ID, see section 3) |
 | Transfer -> Reconciliation 0:N | FK + `UNIQUE(RUN_ID, TRANSFER_ID)` |
 | Reversal is a new linked transfer | `TRANSFERS.REVERSAL_OF` self-FK, UNIQUE |
+| Customer -> Beneficiary 1:N, at most one active per account (R2, B3) | FK + function-based unique index `UX_BENEF_ACTIVE`. The 50-active cap (B5) is enforced in the service under the customer-row lock |
 
 ## 3. Data dictionary
 
@@ -320,6 +345,9 @@ Rule: an FK column is indexed only if it is queried, or its parent rows can be d
 | `IX_RECON_TRANSFER(TRANSFER_ID)` | Reconciliation history per transfer | Added |
 | `IX_IDEMP_LEASE(LEASE_EXPIRES_AT)` | Recovery: find expired `IN_PROGRESS` attempts | Added (A2). NULL except while in progress, so it holds only in-flight rows |
 | `IX_IDEMP_REPLAY_EXPIRY(REPLAY_EXPIRES_AT)` | Purge job: find bodies past retention | Added (A2). NULL once purged, so it holds only replayable rows |
+| `UX_BENEF_ACTIVE(CASE ACTIVE: CUSTOMER_ID, ACCOUNT_ID)` | One active beneficiary per (customer, account) | Release 2, V7. Unique, function-based; deleted rows are not indexed |
+| `IX_BENEF_CUSTOMER(CUSTOMER_ID, CREATED_AT)` | Beneficiary list; rolling 24 h add count (B5) | Release 2, V7 |
+| `IX_NOTIF_CUSTOMER(CUSTOMER_ID, CREATED_AT)` | Future notification list, newest first | Release 2, V9. `UK_NOTIF_EVENT_CUSTOMER` serves the consumer's duplicate check |
 
 **Briefing index dropped:** `LEDGER_ENTRIES(transfer_id)`. `UNIQUE(TRANSFER_ID, ENTRY_POSITION)` already has `TRANSFER_ID` as its leading column and serves every lookup by transfer. A separate index would be redundant, which the briefing says to avoid.
 
@@ -353,6 +381,8 @@ Object grants to `FUNDS_APP` (no table has `DELETE`; there are no sequences):
 | OUTBOX_EVENTS | Y | Y | Y | Publisher updates status and attempts |
 | AUDIT_EVENTS | Y | Y | | Immutable |
 | RECONCILIATION_RECORDS | Y | Y | | Runtime writes results unless P9 is adopted |
+| BENEFICIARIES (R2) | Y | Y | Y | Add; soft delete (`STATUS` -> `DELETED`). Trigger allows nothing else |
+| NOTIFICATIONS (R2) | Y | Y | Y | Consumer inserts; the future API sets `READ_AT` (trigger allows nothing else). Purge is an owner job |
 
 Migration tests in Milestone 3 must prove `FUNDS_APP` cannot `CREATE`/`DROP` tables, cannot `DELETE`, cannot read other schemas, and cannot `UPDATE` ledger or audit rows.
 
@@ -372,8 +402,14 @@ Every table is created with its PK, FK, UNIQUE and CHECK constraints inline, so 
 | `V4__create_risk_and_audit.sql` | RISK_ASSESSMENTS, AUDIT_EVENTS (+ immutability trigger) | V1, V2 |
 | `V5__create_outbox_and_reconciliation.sql` | OUTBOX_EVENTS, RECONCILIATION_RECORDS | V2 |
 | `V6__create_indexes_and_constraints.sql` | All `IX_*` indexes in section 4 | V1-V5 |
+| `V7__create_beneficiaries.sql` (Release 2) | BENEFICIARIES, its two indexes, `TRG_BENEF_IMMUTABLE` | V1 |
+| `V8__generalize_outbox_events.sql` (Release 2) | `OUTBOX_EVENTS.AGGREGATE_TYPE`/`AGGREGATE_ID`, `TRANSFER_ID` nullable, two CHECKs | V5 |
+| `V9__create_notifications.sql` (Release 2) | NOTIFICATIONS, `IX_NOTIF_CUSTOMER`, `TRG_NOTIF_IMMUTABLE` | V1 |
+| `V10__constrain_outbox_id_lengths.sql` (Release 2) | `CK_OUTBOX_EVENT_ID_LEN`, `CK_OUTBOX_AGG_ID_LEN` (IDs exactly 16 bytes) | V8 |
 
-Deviation from the briefing to note: there are no forward-referencing FKs, so nothing has to wait for V6 and it contains only secondary indexes. The file name is kept as briefed. Total after V5: 12 tables.
+Deviation from the briefing to note: there are no forward-referencing FKs, so nothing has to wait for V6 and it contains only secondary indexes. The file name is kept as briefed. Total after V5: 12 tables; after V7: 13; after V9: 14.
+
+From V7 on, migrations are additive only (briefing: "additive migrations only after release"): a new version per change, never an edit to V1-V6.
 
 ## 7. Retention, volume and sizing
 
@@ -532,3 +568,98 @@ UPDATE IDEMPOTENCY_RECORDS
 
 ### Tests required in Milestone 3
 Replay inside the window; `KEY_EXPIRED` after it with the same and with a different payload; body purge then retry; concurrent identical requests (one posts, the rest `IN_PROGRESS`); crash after T0 then retry; takeover race (two retries, one winner); **zombie original**: slow attempt is taken over and must roll back without posting; completion `UPDATE` with a stale `ATTEMPT` matches nothing; trigger rejects each forbidden change to a completed row and allows the body purge; `CK_IDEMP_*` violations; reconciler closes stale rows and flags each anomaly; a stored `422` replays with a fresh `correlationId`; expired key never creates a second ledger entry (assert ledger and balance unchanged).
+
+## 12. Beneficiaries (Release 2, migration V7)
+
+Contract and decisions B1-B8 (approved 2026-10-18): `docs/release-2-beneficiaries-contract.md`. Script: `V7__create_beneficiaries.sql`.
+
+### BENEFICIARIES
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| BENEFICIARY_ID | RAW(16) | NN | PK. UUIDv7 (P2). API `beneficiaryId` |
+| CUSTOMER_ID | RAW(16) | NN | FK -> CUSTOMERS. Owner (B2) |
+| ACCOUNT_ID | RAW(16) | NN | FK -> ACCOUNTS. Internal key (P1); the API shows `ACCOUNT_NUMBER` |
+| NICKNAME | VARCHAR2(40 CHAR) | NN | Untrusted text. CHECK `CK_BENEF_NICKNAME`: already trimmed, no control characters |
+| STATUS | VARCHAR2(10) | NN | CHECK IN (`ACTIVE`,`DELETED`) |
+| CREATED_BY_USER_ID | RAW(16) | NN | FK -> APP_USERS. From the token |
+| CREATED_AT | TIMESTAMP WITH TIME ZONE | NN | Default `SYSTIMESTAMP` |
+| DELETED_BY_USER_ID | RAW(16) | | FK -> APP_USERS |
+| DELETED_AT | TIMESTAMP WITH TIME ZONE | | |
+
+Table CHECK `CK_BENEF_DELETED`: both deletion columns are set exactly when `STATUS = 'DELETED'`.
+
+**Active uniqueness (B3).** `UX_BENEF_ACTIVE` is a unique function-based index on `(CASE WHEN STATUS='ACTIVE' THEN CUSTOMER_ID END, CASE WHEN STATUS='ACTIVE' THEN ACCOUNT_ID END)`. A deleted row's key is entirely NULL, and Oracle does not index all-NULL keys, so deleting frees the pair for a later re-add while history accumulates. A duplicate add that slips past the service check fails with `ORA-00001` on this index, which the service maps to `409 BENEFICIARY_ALREADY_EXISTS`.
+
+**Trigger `TRG_BENEF_IMMUTABLE`** (row-level, defence in depth beyond the approved outline, same pattern as the audit and idempotency triggers): refuses every `DELETE`, any update to a `DELETED` row, and any change to the ID, customer, account, nickname, creator or creation time. Only `ACTIVE -> DELETED` gets through. Error `ORA-20003` (`-20001` audit, `-20002` idempotency).
+
+**Not in the database, by design.** These rules need cross-row counting under a lock, so the service enforces them: the 50-active and 20-per-24 h caps (B5), the own-account rule (B6) and the destination-active rule (B4). The customer row (`SELECT ... FOR UPDATE` on `CUSTOMERS`, the same first lock as posting, A1) serialises concurrent adds for one customer. No transaction holds a beneficiary lock and then takes a balance lock, so the global lock order is unchanged.
+
+**Grants (provisioning, outside Flyway).** Run as `FUNDS_OWNER` once V7 is applied:
+```sql
+GRANT SELECT, INSERT, UPDATE ON FUNDS_OWNER.BENEFICIARIES TO FUNDS_APP;
+```
+No `DELETE` (P8). `PrivilegeIT` asserts this.
+
+**Audit.** A successful add or delete writes `AUDIT_EVENTS` with `ENTITY_TYPE = 'BENEFICIARY'`, the beneficiary's ID, `ACTION` = `BENEFICIARY_ADD` or `BENEFICIARY_DELETE` and outcome `SUCCESS`, in the same transaction. A repeated delete writes nothing. A business rejection of an add (409 or 422) creates no beneficiary, so it is audited against the customer instead: `ENTITY_TYPE = 'CUSTOMER'`, `ENTITY_ID` = the caller's customer, outcome `FAILURE` and `DETAIL` = the error code. This leaves a trail of account-number probing (B4, B5). Malformed requests (400) are not audited. `DETAIL` never carries the nickname, because it is customer free text.
+
+**Retention and sizing.** At most 50 active rows per customer, plus deleted history (B5 bounds adds to 20 per day). A row is about 150 bytes, plus about 100 for indexes. Even 100,000 customers with 100 rows each comes to about 2.5 GB, but realistic use is a few dozen rows per customer, well under 100 MB, which is negligible beside transfers. Proposed retention: keep deleted rows as long as the audit trail, since they explain past audit events. Purging them would need the privileged purge job, not the runtime user.
+
+### Test status (2026-10-18)
+
+Run against a **disposable local Oracle Free 23.26 container** (not `bank-db-01`; removed afterwards), with Flyway 11.7.2 (the project's own dependency) as `FUNDS_OWNER`, which held only `CREATE SESSION`, `CREATE TABLE`, `CREATE TRIGGER`. Flyway warns that Oracle 23.26 is newer than it has been tested against; no migration was affected.
+
+| Check | Result |
+|-------|--------|
+| `migrate` to V6, then `migrate` to V7 (V7 applied on top of an existing V1-V6 schema) | 6 applied, then 1 applied, no errors |
+| `validate`; second `migrate` | Pass; 0 applied |
+| Inventory | 13 tables, 0 invalid objects, 3 triggers. BENEFICIARIES: 1 PK, 4 FK, 3 named CHECK, `UX_BENEF_ACTIVE` (unique, function-based), `IX_BENEF_CUSTOMER` |
+| 22 constraint/trigger checks as owner, all rolled back | 22 pass. Covers: duplicate active pair rejected; same account under two customers allowed; blank, padded, control-character and 41-character nicknames rejected; 40 non-ASCII characters accepted; bad status; DELETED without deletion columns; each FK; trigger refuses nickname, account and customer changes; soft delete allowed; deleted row frozen; re-add after delete allowed; `DELETE` refused even for the owner |
+| Runtime identity (`FUNDS_APP`, granted `SELECT, INSERT, UPDATE`) | Insert and soft delete succeed; `DELETE` refused by privilege (`ORA-41900` on 23.26, `ORA-01031` on older releases); `ALTER TABLE` and `DROP INDEX` refused |
+
+Service level (same day, fresh disposable container, the app connected as `FUNDS_APP` with the section 5 grants): `BeneficiaryIT` 9/9 pass. It covers lifecycle and re-add; nickname ordering; cross-customer 404; the contract's rejections with `FAILURE` audit rows; six parallel adds of one account (exactly 1 created, 5 `409` with the winner's `Location`); parallel adds at cap minus 1 (exactly 1 created); a delete does not refund the daily cap; parallel deletes (all 204, one audit row); and the trigger against the owner. `PrivilegeIT` 5/5 pass, including no `DELETE` on `BENEFICIARIES`. The existing `PostingIT` (14) also passed for the first time.
+
+Not yet tested: `EXPLAIN PLAN` for the list and 24 h count queries; anything on `bank-db-01`.
+
+## 13. Event streaming: outbox generalisation and notifications (Release 2, V8-V9)
+
+Design, gaps and decisions E1-E9: `docs/release-2-event-streaming.md`.
+
+### OUTBOX_EVENTS after V8
+| Column | Change |
+|--------|--------|
+| AGGREGATE_TYPE | **New**. `VARCHAR2(30)` NN, default `TRANSFER`. CHECK `CK_OUTBOX_AGG_TYPE` IN (`TRANSFER`,`BENEFICIARY`). Selects the Kafka topic |
+| AGGREGATE_ID | **New**. `RAW(16)` NN, backfilled from `TRANSFER_ID`. The Kafka message key |
+| TRANSFER_ID | Now nullable. CHECK `CK_OUTBOX_AGG_TRANSFER`: set, and equal to `AGGREGATE_ID`, exactly for transfer events, so `FK_OUTBOX_TRANSFER` still covers every transfer event |
+
+### NOTIFICATIONS (V9)
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| NOTIFICATION_ID | RAW(16) | NN | PK, UUIDv7 |
+| CUSTOMER_ID | RAW(16) | NN | FK -> CUSTOMERS. Recipient |
+| CATEGORY | VARCHAR2(12) | NN | CHECK IN (`TRANSACTION`,`SECURITY`,`ACCOUNT`) |
+| TYPE | VARCHAR2(40) | NN | CHECK IN the seven types in the streaming doc, section 4 |
+| SOURCE_EVENT_ID | RAW(16) | NN | Outbox `EVENT_ID`. `UNIQUE(SOURCE_EVENT_ID, CUSTOMER_ID)`: the consumer's idempotency key |
+| ENTITY_TYPE / ENTITY_ID | VARCHAR2(30) / RAW(16) | NN | What it is about (`TRANSFER` or `BENEFICIARY`). No FK, like `AUDIT_EVENTS` |
+| PARAMS | CLOB | NN | CHECK `IS JSON`. Render parameters; never free text or full account numbers (E8) |
+| OCCURRED_AT | TIMESTAMP WITH TIME ZONE | NN | The event's time |
+| CREATED_AT | TIMESTAMP WITH TIME ZONE | NN | When projected |
+| READ_AT | TIMESTAMP WITH TIME ZONE | | Set once by the future API |
+
+Trigger `TRG_NOTIF_IMMUTABLE` (`ORA-20004`): an update may only set `READ_AT`, once, from NULL. Unlike beneficiaries, rows may be deleted by the owner's retention purge; the runtime user has no `DELETE` grant.
+
+Grant (provisioning): `GRANT SELECT, INSERT, UPDATE ON FUNDS_OWNER.NOTIFICATIONS TO FUNDS_APP;`
+
+Sizing: at most two rows per transfer (sender and receiver) plus one per beneficiary change, about 500 bytes each with the index, so roughly 1 KB per transfer on top of the section 7 estimate. Retention is still to be decided; 13 months is a common default for in-app notices.
+
+### Test status (2026-10-18)
+
+Disposable Oracle Free 23.26 plus a single-node Apache Kafka 3.9.1 broker with topic auto-create **off**; both removed afterwards.
+
+| Check | Result |
+|-------|--------|
+| `migrate` to V7, insert an old-style transfer outbox row, then `migrate` V8-V9; `validate` | 7, then 2 applied; the old row was backfilled (`AGGREGATE_TYPE=TRANSFER`, `AGGREGATE_ID=TRANSFER_ID`); 14 tables, 0 invalid objects |
+| 18 constraint/trigger checks, rolled back | 18 pass: each `CK_OUTBOX_AGG_*` rule, transfer FK still enforced, `UK_NOTIF_EVENT_CUSTOMER`, type/category/JSON checks, `TRG_NOTIF_IMMUTABLE` (only `READ_AT`, once), owner purge allowed |
+| `EventPipelineIT` (app as `FUNDS_APP`, real broker, app-created topics and DLTs) | 4/4: transfer -> `PUBLISHED` -> sender and receiver notified; beneficiary add/delete -> security notices, `TRANSFER_ID` NULL; redelivered record -> no duplicate; poison record -> DLT with exception headers, partition keeps flowing |
+| Whole suite, including the earlier ITs on V9 | 150 unit + 32 IT pass. After the run: 77/77 outbox events `PUBLISHED`, all 7 notification types present, 0 duplicate (event, customer) pairs |
+
+Found while testing: a pending outbox row whose ID cannot be decoded made every publisher poll fail, so nothing behind it was sent. **Fixed** (gap G12, `docs/release-2-event-streaming.md` section 8): the publisher now decodes row by row and quarantines a bad row as `FAILED`, and **V10** adds `CK_OUTBOX_EVENT_ID_LEN` / `CK_OUTBOX_AGG_ID_LEN` so such a row can no longer be written.

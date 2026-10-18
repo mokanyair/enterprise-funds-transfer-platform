@@ -39,7 +39,7 @@ class PrivilegeIT {
     @Test
     void runtimeUserCannotDeleteAnything() {
         for (String table : new String[] {"TRANSFERS", "LEDGER_ENTRIES", "AUDIT_EVENTS", "IDEMPOTENCY_RECORDS",
-                "ACCOUNT_BALANCES", "OUTBOX_EVENTS", "CUSTOMERS"}) {
+                "ACCOUNT_BALANCES", "OUTBOX_EVENTS", "CUSTOMERS", "BENEFICIARIES", "NOTIFICATIONS"}) {
             assertThatThrownBy(() -> runtime().update("DELETE FROM " + table + " WHERE 1 = 0"))
                     .as("DELETE on %s must be refused", table).isInstanceOf(Exception.class);
         }

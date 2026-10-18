@@ -12,6 +12,7 @@ public enum ErrorCode {
             "This Idempotency-Key was already used and its stored response has expired. "
                     + "The original request was processed and has not been repeated."),
     TRANSFER_NOT_CANCELLABLE(409, "The transfer has already been posted and cannot be cancelled."),
+    BENEFICIARY_ALREADY_EXISTS(409, "This account is already saved as a beneficiary."),
     INSUFFICIENT_FUNDS(422, "The source account has insufficient available funds."),
     ACCOUNT_INACTIVE(422, "One of the accounts is not active."),
     CURRENCY_MISMATCH(422, "The currency does not match the accounts."),
@@ -19,6 +20,8 @@ public enum ErrorCode {
     AMOUNT_NOT_POSITIVE(422, "The amount must be greater than zero."),
     LIMIT_EXCEEDED(422, "The transfer exceeds a configured limit."),
     TRANSFER_REJECTED(422, "The transfer was rejected."),
+    BENEFICIARY_OWN_ACCOUNT(422, "Your own accounts cannot be saved as beneficiaries."),
+    BENEFICIARY_LIMIT_REACHED(422, "The beneficiary limit has been reached."),
     INTERNAL_ERROR(500, "An unexpected error occurred. Quote the correlation ID when contacting support.");
 
     private final int httpStatus;

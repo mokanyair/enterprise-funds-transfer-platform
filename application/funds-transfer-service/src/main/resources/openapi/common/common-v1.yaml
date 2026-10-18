@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Funds Transfer API - Common
-  version: 1.1.0   # keep equal to the root spec (funds-transfer-v1.yaml)
+  version: 1.2.0   # keep equal to the root spec (funds-transfer-v1.yaml)
   description: |
     Shared building blocks used by every domain spec: money and account-ID
     types, the error model and closed `ErrorCode` set, the correlation-ID
@@ -50,12 +50,14 @@ components:
     ErrorCode:
       type: string
       description: |
-        Closed set. HTTP status per code:
+        Closed set; clients must still tolerate an unknown value (show a
+        generic message), since new codes are added additively. HTTP status per code:
         400 INVALID_REQUEST | 401 UNAUTHENTICATED | 403 FORBIDDEN | 404 NOT_FOUND |
         409 IDEMPOTENCY_KEY_REUSED, IDEMPOTENCY_IN_PROGRESS, IDEMPOTENCY_KEY_EXPIRED,
-            TRANSFER_NOT_CANCELLABLE |
+            TRANSFER_NOT_CANCELLABLE, BENEFICIARY_ALREADY_EXISTS |
         422 INSUFFICIENT_FUNDS, ACCOUNT_INACTIVE, CURRENCY_MISMATCH, SAME_ACCOUNT,
-            AMOUNT_NOT_POSITIVE, LIMIT_EXCEEDED, TRANSFER_REJECTED |
+            AMOUNT_NOT_POSITIVE, LIMIT_EXCEEDED, TRANSFER_REJECTED,
+            BENEFICIARY_OWN_ACCOUNT, BENEFICIARY_LIMIT_REACHED |
         500 INTERNAL_ERROR
       enum:
         - INVALID_REQUEST
@@ -73,6 +75,9 @@ components:
         - AMOUNT_NOT_POSITIVE
         - LIMIT_EXCEEDED
         - TRANSFER_REJECTED
+        - BENEFICIARY_ALREADY_EXISTS   # Release 2
+        - BENEFICIARY_OWN_ACCOUNT      # Release 2
+        - BENEFICIARY_LIMIT_REACHED    # Release 2
         - INTERNAL_ERROR
 
     Error:

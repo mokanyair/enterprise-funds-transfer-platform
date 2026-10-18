@@ -5,6 +5,7 @@ React + TypeScript + Vite frontend for `funds-transfer-service`, built from
 Release 1 (MVP) screens — dashboard, accounts, account detail, transfer (form → review →
 idempotent submit → status), transaction history/detail, profile and sign-out — wired to the
 real backend contract. Login/MFA is delegated entirely to Keycloak and is out of scope for this UI.
+Release 2 adds **Beneficiaries** (see "Release 2 status" below).
 
 ## Quick start (mock data, no backend needed)
 
@@ -97,8 +98,10 @@ The design guide describes a broader API surface than what's implemented. The re
   reads, paginated, server-side filtered.
 - `POST /transfers` (`Idempotency-Key` header), `GET /transfers/{id}`,
   `POST /transfers/{id}/cancel`.
+- Release 2: `GET`/`POST /beneficiaries`, `DELETE /beneficiaries/{id}` (`GET /beneficiaries/{id}`
+  exists but the UI doesn't need it).
 
-There is no beneficiaries, payments, cards, or statements endpoint, so those modules from the
+There is no payments, cards, or statements endpoint, so those modules from the
 guide are intentionally not built — the guide itself says not to expose dead menu items for
 services that don't exist yet. There's also no cross-account "all transactions" feed; the
 Transactions screen picks an account first, then shows that account's filtered history.
@@ -149,6 +152,29 @@ Keycloak. Two mappings to note:
 
 Transaction filtering is status-only because that's the only filter
 `GET /accounts/{id}/transfers` accepts.
+
+## Release 2 status
+
+**Beneficiaries** (`/beneficiaries`, contract: `docs/release-2-beneficiaries-contract.md`):
+
+- List saved recipients (nickname plus masked account number), add (account number + nickname), and
+  delete with an inline confirmation. "Send money" opens the transfer form with `?to=` prefilled.
+- The transfer form gains a "Saved beneficiary" picker, and the review step names the beneficiary. The
+  transfer request itself is unchanged (decision B1). If the list can't load, the form still works
+  with a typed account number.
+- Client validation mirrors the server: account-number pattern, own accounts, nickname trimmed to
+  1-40 characters (code points) with no control characters. Ownership, account status and caps
+  are left to the backend; its `422` message is shown as-is.
+- A `409 BENEFICIARY_ALREADY_EXISTS` (e.g. a retry after a lost response) is shown as "already
+  saved", not as an error (B3). Nicknames are rendered as text only; a test covers markup injection.
+- MSW mocks implement the same rules and order as `BeneficiaryService`, so `npm run dev` works
+  without a backend.
+- Not done: step-up authentication when adding a beneficiary (guide §14, out of scope by decision;
+  revisit with Security Center). The screen has not been visually reviewed in a browser yet;
+  it reuses the existing card, field, alert and button styles.
+
+The other Release 2 modules (Payments, Statements, Notifications, Security Center) are not
+built: they still have no backend contract.
 
 ## Deferred to later phases
 
