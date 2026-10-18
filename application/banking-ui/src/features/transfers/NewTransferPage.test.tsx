@@ -238,3 +238,36 @@ describe("NewTransferPage", () => {
     });
   });
 });
+
+describe("NewTransferPage with beneficiaries", () => {
+  it("fills the destination from a saved beneficiary and names it on review", async () => {
+    const user = userEvent.setup();
+    renderRoute(<NewTransferPage />);
+    const picker = await screen.findByLabelText("Saved beneficiary");
+    expect(picker).toHaveTextContent("Sam - shared rent — •••• 2001");
+
+    await user.selectOptions(picker, screen.getByRole("option", { name: /Sam - shared rent/ }));
+    expect(screen.getByLabelText("To account number")).toHaveValue("ACC2001");
+
+    await user.type(screen.getByLabelText(/^Amount/), "10.00");
+    await user.click(screen.getByRole("button", { name: "Review transfer" }));
+    await screen.findByRole("heading", { name: "Review and confirm" });
+    expect(screen.getByText(/Sam - shared rent ·/)).toBeInTheDocument();
+  });
+
+  it("prefills the destination from ?to= (the Send money shortcut)", async () => {
+    renderRoute(<NewTransferPage />, { path: "/transfers/new", url: "/transfers/new?to=ACC2001" });
+    expect(await screen.findByLabelText("To account number")).toHaveValue("ACC2001");
+    expect(await screen.findByLabelText("Saved beneficiary")).toHaveValue(
+      (await screen.findByRole("option", { name: /Sam - shared rent/ })).getAttribute("value"),
+    );
+  });
+
+  it("still works with a typed account number when beneficiaries fail to load", async () => {
+    server.use(http.get(`${API}/beneficiaries`, () => HttpResponse.json({}, { status: 500 })));
+    const user = userEvent.setup();
+    renderRoute(<NewTransferPage />, { path: "/transfers/new" });
+    await fillAndReview(user);
+    expect(screen.queryByLabelText("Saved beneficiary")).not.toBeInTheDocument();
+  });
+});

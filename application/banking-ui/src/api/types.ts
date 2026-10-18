@@ -77,6 +77,23 @@ export interface CreateTransferRequest {
   reference?: string;
 }
 
+/** Release 2 (openapi/beneficiaries/beneficiaries-v1.yaml). accountId is another customer's public number. */
+export interface Beneficiary {
+  beneficiaryId: string;
+  accountId: string;
+  nickname: string;
+  createdAt: string;
+}
+
+export interface BeneficiaryList {
+  beneficiaries: Beneficiary[];
+}
+
+export interface CreateBeneficiaryRequest {
+  accountId: string;
+  nickname: string;
+}
+
 export type ApiErrorCode =
   | "INVALID_REQUEST"
   | "UNAUTHENTICATED"
@@ -86,6 +103,7 @@ export type ApiErrorCode =
   | "IDEMPOTENCY_IN_PROGRESS"
   | "IDEMPOTENCY_KEY_EXPIRED"
   | "TRANSFER_NOT_CANCELLABLE"
+  | "BENEFICIARY_ALREADY_EXISTS"
   | "INSUFFICIENT_FUNDS"
   | "ACCOUNT_INACTIVE"
   | "CURRENCY_MISMATCH"
@@ -93,6 +111,8 @@ export type ApiErrorCode =
   | "AMOUNT_NOT_POSITIVE"
   | "LIMIT_EXCEEDED"
   | "TRANSFER_REJECTED"
+  | "BENEFICIARY_OWN_ACCOUNT"
+  | "BENEFICIARY_LIMIT_REACHED"
   | "INTERNAL_ERROR";
 
 export interface ApiErrorBody {

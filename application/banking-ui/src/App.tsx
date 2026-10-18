@@ -15,6 +15,7 @@ import { TransferDetailPage } from "./features/transfers/TransferDetailPage";
 import { TransactionsPage } from "./features/transactions/TransactionsPage";
 import { AccountTransactionsPage } from "./features/transactions/AccountTransactionsPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
+import { BeneficiariesPage } from "./features/beneficiaries/BeneficiariesPage";
 
 const AuthProvider = env.authMode === "keycloak" ? KeycloakAuthProvider : DevAuthProvider;
 
@@ -35,6 +36,7 @@ export function App() {
                 <Route path="/transfers/:transferId" element={<TransferDetailPage />} />
                 <Route path="/transactions" element={<TransactionsPage />} />
                 <Route path="/transactions/:accountId" element={<AccountTransactionsPage />} />
+                <Route path="/beneficiaries" element={<BeneficiariesPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>

@@ -1,7 +1,12 @@
 import { http, HttpResponse } from "msw";
 import { env } from "../lib/env";
 import {
+  BENEFICIARY_MAX_ACTIVE,
+  BENEFICIARY_MAX_ADDS_PER_DAY,
   accountsForCustomer,
+  activeBeneficiaries,
+  mockBeneficiaries,
+  toBeneficiary,
   findAccount,
   idempotencyStore,
   mockTransfers,
@@ -9,7 +14,14 @@ import {
   toBalance,
   transfersForAccount,
 } from "./data";
-import type { ApiErrorBody, ApiErrorCode, CreateTransferRequest, Transfer, TransferStatus } from "../api/types";
+import type {
+  ApiErrorBody,
+  ApiErrorCode,
+  CreateBeneficiaryRequest,
+  CreateTransferRequest,
+  Transfer,
+  TransferStatus,
+} from "../api/types";
 import { isCancellableStatus, isTerminalStatus } from "../api/types";
 
 const RISK_REVIEW_THRESHOLD = 10000; // mirrors funds.risk.review-threshold in application.yml
@@ -223,6 +235,70 @@ export const handlers = [
     transfer.status = "CANCELLED";
     transfer.updatedAt = new Date().toISOString();
     return HttpResponse.json(transfer, { headers: { "X-Correlation-Id": correlationId } });
+  }),
+
+  // ---- Release 2: beneficiaries. Same rules and order as BeneficiaryService (docs/release-2-beneficiaries-contract.md).
+
+  http.get(`${base}/beneficiaries`, ({ request }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    return HttpResponse.json(
+      { beneficiaries: activeBeneficiaries(subject).map(toBeneficiary) },
+      { headers: { "X-Correlation-Id": correlationId, "Cache-Control": "no-store" } },
+    );
+  }),
+
+  http.post(`${base}/beneficiaries`, async ({ request }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    const body = (await request.json()) as CreateBeneficiaryRequest;
+    const nickname = typeof body.nickname === "string" ? body.nickname.trim() : "";
+    if (!nickname || [...nickname].length > 40 || !/^[A-Za-z0-9_-]{1,32}$/.test(String(body.accountId ?? ""))) {
+      return fail(400, "INVALID_REQUEST", "The request is invalid.", correlationId);
+    }
+    const account = findAccount(body.accountId);
+    if (account?.customerSubject === subject) {
+      return fail(422, "BENEFICIARY_OWN_ACCOUNT", "Your own accounts cannot be saved as beneficiaries.", correlationId);
+    }
+    if (!account || account.status !== "ACTIVE") {
+      return fail(422, "ACCOUNT_INACTIVE", "One of the accounts is not active.", correlationId);
+    }
+    const existing = activeBeneficiaries(subject).find((b) => b.accountId === account.accountId);
+    if (existing) {
+      return fail(409, "BENEFICIARY_ALREADY_EXISTS", "This account is already saved as a beneficiary.", correlationId, {
+        Location: `/api/v1/beneficiaries/${existing.beneficiaryId}`,
+      });
+    }
+    const dayAgo = Date.now() - 86_400_000;
+    const addsToday = mockBeneficiaries.filter((b) => b.customerSubject === subject && Date.parse(b.createdAt) >= dayAgo).length;
+    if (activeBeneficiaries(subject).length >= BENEFICIARY_MAX_ACTIVE || addsToday >= BENEFICIARY_MAX_ADDS_PER_DAY) {
+      return fail(422, "BENEFICIARY_LIMIT_REACHED", "The beneficiary limit has been reached.", correlationId);
+    }
+    const created = {
+      beneficiaryId: crypto.randomUUID(),
+      customerSubject: subject,
+      accountId: account.accountId,
+      nickname,
+      status: "ACTIVE" as const,
+      createdAt: new Date().toISOString(),
+    };
+    mockBeneficiaries.push(created);
+    return HttpResponse.json(toBeneficiary(created), {
+      status: 201,
+      headers: { "X-Correlation-Id": correlationId, Location: `/api/v1/beneficiaries/${created.beneficiaryId}` },
+    });
+  }),
+
+  http.delete(`${base}/beneficiaries/:beneficiaryId`, ({ request, params }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    const row = mockBeneficiaries.find((b) => b.beneficiaryId === params.beneficiaryId && b.customerSubject === subject);
+    if (!row) return fail(404, "NOT_FOUND", "The requested resource was not found.", correlationId);
+    row.status = "DELETED"; // soft delete; repeating it is 204 again (B7)
+    return new HttpResponse(null, { status: 204, headers: { "X-Correlation-Id": correlationId } });
   }),
 ];
 

@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: "/accounts", label: "Accounts", icon: "▤" },
   { to: "/transfers/new", label: "Transfer", icon: "⇄" },
   { to: "/transactions", label: "Transactions", icon: "≡" },
+  { to: "/beneficiaries", label: "Beneficiaries", icon: "☆" },
 ];
 
 function navClassName({ isActive }: { isActive: boolean }) {

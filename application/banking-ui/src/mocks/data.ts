@@ -92,3 +92,44 @@ export function transfersForAccount(accountId: string, status?: TransferStatus):
     .filter((t) => !status || t.status === status)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+
+export interface MockBeneficiary {
+  beneficiaryId: string;
+  customerSubject: string;
+  accountId: string;
+  nickname: string;
+  status: "ACTIVE" | "DELETED";
+  createdAt: string;
+}
+
+/** Mirrors funds.beneficiaries.* defaults in application.yml (decision B5). */
+export const BENEFICIARY_MAX_ACTIVE = 50;
+export const BENEFICIARY_MAX_ADDS_PER_DAY = 20;
+
+export const mockBeneficiaries: MockBeneficiary[] = [
+  {
+    beneficiaryId: crypto.randomUUID(),
+    customerSubject: "customer-1",
+    accountId: "ACC2001",
+    nickname: "Sam - shared rent",
+    status: "ACTIVE",
+    createdAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+  },
+];
+
+export function activeBeneficiaries(subject: string): MockBeneficiary[] {
+  return mockBeneficiaries
+    .filter((b) => b.customerSubject === subject && b.status === "ACTIVE")
+    .sort((a, b) => a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) || a.beneficiaryId.localeCompare(b.beneficiaryId));
+}
+
+export function toBeneficiary(b: MockBeneficiary) {
+  return { beneficiaryId: b.beneficiaryId, accountId: b.accountId, nickname: b.nickname, createdAt: b.createdAt };
+}
+
+const seededBeneficiaries = mockBeneficiaries.map((b) => ({ ...b }));
+
+/** Tests mutate the shared mock store; this puts the seed back. */
+export function resetMockBeneficiaries(): void {
+  mockBeneficiaries.splice(0, mockBeneficiaries.length, ...seededBeneficiaries.map((b) => ({ ...b })));
+}

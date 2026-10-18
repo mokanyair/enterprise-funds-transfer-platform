@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { useAccounts } from "../../hooks/useAccounts";
 import { useCreateTransfer } from "../../hooks/useCreateTransfer";
+import { useBeneficiaries } from "../../hooks/useBeneficiaries";
 import { ApiError, isOutcomeUnknown } from "../../api/errors";
 import type { CreateTransferRequest } from "../../api/types";
 import { CurrencyDisplay } from "../../components/CurrencyDisplay";
@@ -27,6 +28,9 @@ export function NewTransferPage() {
   // Only ACTIVE accounts can send money; the backend enforces this too (ACCOUNT_INACTIVE).
   const accounts = allAccounts.filter((a) => a.status === "ACTIVE");
   const createTransfer = useCreateTransfer();
+  // Optional convenience (B1): transfers never reference a beneficiary, it only fills in the destination. If the
+  // list can't load, the form still works with a typed account number.
+  const beneficiaries = useBeneficiaries().data?.beneficiaries ?? [];
 
   // An attempt whose outcome we never saw (timeout, reload, sign-in redirect) is resumed, not redone.
   const [resumed] = useState(() => loadPendingTransfer(user?.subject));
@@ -39,7 +43,12 @@ export function NewTransferPage() {
           amount: resumed.body.amount,
           reference: resumed.body.reference ?? "",
         }
-      : { sourceAccountId: searchParams.get("from") ?? "", destinationAccountId: "", amount: "", reference: "" },
+      : {
+          sourceAccountId: searchParams.get("from") ?? "",
+          destinationAccountId: searchParams.get("to") ?? "",
+          amount: "",
+          reference: "",
+        },
   );
   const [errors, setErrors] = useState<TransferFormErrors>({});
   const [attempt, setAttempt] = useState<{ key: string; body: CreateTransferRequest } | null>(
@@ -53,6 +62,8 @@ export function NewTransferPage() {
   const requestedSource = accounts.some((a) => a.accountId === values.sourceAccountId) ? values.sourceAccountId : "";
   const effectiveSourceId = requestedSource || accounts[0]?.accountId || "";
   const sourceAccount = accounts.find((a) => a.accountId === effectiveSourceId);
+  const nicknameFor = (accountId: string) => beneficiaries.find((b) => b.accountId === accountId)?.nickname;
+  const selectedBeneficiary = beneficiaries.find((b) => b.accountId === values.destinationAccountId.trim());
 
   function goToReview() {
     const formValues = { ...values, sourceAccountId: effectiveSourceId };
@@ -181,6 +192,28 @@ export function NewTransferPage() {
             )}
           </div>
 
+          {beneficiaries.length > 0 && (
+            <div className="field">
+              <label htmlFor="beneficiary">Saved beneficiary</label>
+              <select
+                id="beneficiary"
+                className="select"
+                value={selectedBeneficiary?.beneficiaryId ?? ""}
+                onChange={(e) => {
+                  const chosen = beneficiaries.find((b) => b.beneficiaryId === e.target.value);
+                  setValues((v) => ({ ...v, destinationAccountId: chosen?.accountId ?? "" }));
+                }}
+              >
+                <option value="">Enter an account number below</option>
+                {beneficiaries.map((b) => (
+                  <option key={b.beneficiaryId} value={b.beneficiaryId}>
+                    {b.nickname} — {maskAccountId(b.accountId)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="field">
             <label htmlFor="destination">To account number</label>
             <input
@@ -249,7 +282,15 @@ export function NewTransferPage() {
 
           <dl className="stack stack--tight">
             <Row label="From" value={<MaskedAccountNumber accountId={attempt.body.sourceAccountId} />} />
-            <Row label="To" value={<MaskedAccountNumber accountId={attempt.body.destinationAccountId} />} />
+            <Row
+              label="To"
+              value={
+                <>
+                  {nicknameFor(attempt.body.destinationAccountId) && <>{nicknameFor(attempt.body.destinationAccountId)} · </>}
+                  <MaskedAccountNumber accountId={attempt.body.destinationAccountId} />
+                </>
+              }
+            />
             <Row label="Amount" value={<CurrencyDisplay amount={attempt.body.amount} currency={attempt.body.currency} />} />
             {attempt.body.reference && <Row label="Reference" value={attempt.body.reference} />}
           </dl>
