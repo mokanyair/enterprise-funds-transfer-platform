@@ -5,6 +5,7 @@ import com.enterprise.funds.transfer.domain.Actor;
 import com.enterprise.funds.transfer.domain.ApiException;
 import com.enterprise.funds.transfer.domain.CurrencyPolicy;
 import com.enterprise.funds.transfer.domain.ErrorCode;
+import com.enterprise.funds.transfer.events.EventEnvelope;
 import com.enterprise.funds.transfer.persistence.AccountRepository;
 import com.enterprise.funds.transfer.persistence.BeneficiaryRepository;
 import com.enterprise.funds.transfer.persistence.CustomerRepository;
@@ -38,17 +39,19 @@ public class BeneficiaryService {
     private final AccountRepository accounts;
     private final CustomerRepository customers;
     private final AuditService audit;
+    private final OutboxWriter outbox;
     private final FundsProperties.Beneficiaries caps;
 
     public BeneficiaryService(Clock clock, TransactionTemplate postingTransaction, BeneficiaryRepository beneficiaries,
                               AccountRepository accounts, CustomerRepository customers, AuditService audit,
-                              FundsProperties props) {
+                              OutboxWriter outbox, FundsProperties props) {
         this.clock = clock;
         this.tx = postingTransaction;
         this.beneficiaries = beneficiaries;
         this.accounts = accounts;
         this.customers = customers;
         this.audit = audit;
+        this.outbox = outbox;
         this.caps = props.beneficiaries();
     }
 
@@ -108,6 +111,7 @@ public class BeneficiaryService {
             // A false result means a concurrent delete won; the outcome is the same, and that one wrote the audit row.
             if (beneficiaries.markDeleted(actor.customerId(), beneficiaryId, actor.userId(), OffsetDateTime.now(clock))) {
                 audit.record(actor, "BENEFICIARY_DELETE", "BENEFICIARY", beneficiaryId, "SUCCESS", correlationId, null);
+                outbox.writeBeneficiary(EventEnvelope.BENEFICIARY_DELETED, row);
             }
         });
     }
@@ -127,7 +131,11 @@ public class BeneficiaryService {
         beneficiaries.insert(id, actor.customerId(), account.id(), nickname, actor.userId(), now);
         // DETAIL stays empty: the nickname is customer free text and never goes into the audit trail.
         audit.record(actor, "BENEFICIARY_ADD", "BENEFICIARY", id, "SUCCESS", correlationId, null);
-        return BeneficiaryDto.from(beneficiaries.find(actor.customerId(), id).orElseThrow());
+        BeneficiaryRow created = beneficiaries.find(actor.customerId(), id).orElseThrow();
+        // Same transaction as the insert: the event exists if and only if the beneficiary does (a "was this you?"
+        // security notice, E7).
+        outbox.writeBeneficiary(EventEnvelope.BENEFICIARY_ADDED, created);
+        return BeneficiaryDto.from(created);
     }
 
     /**

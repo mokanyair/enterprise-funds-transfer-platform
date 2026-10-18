@@ -20,8 +20,10 @@ public final class TestProps {
         return new FundsProperties(Duration.ofSeconds(10), new FundsProperties.Db(5),
                 new FundsProperties.Idempotency(replay, lease, tombstone, Duration.ofSeconds(1), Duration.ofMinutes(2)),
                 new FundsProperties.Risk(review, reject),
-                new FundsProperties.Outbox(false, "t", 100, 10, Duration.ofSeconds(1)),
+                new FundsProperties.Outbox(false, "t", "b", 100, 10, Duration.ofSeconds(1)),
                 new FundsProperties.Jobs(true, Duration.ofSeconds(30), Duration.ofMinutes(10), 500, false),
-                new FundsProperties.Cors(java.util.List.of()), beneficiaries);
+                new FundsProperties.Cors(java.util.List.of()), beneficiaries,
+                new FundsProperties.Kafka(false, 3, (short) 1),
+                new FundsProperties.Notifications(false, "g", 5, Duration.ofSeconds(2)));
     }
 }

@@ -39,5 +39,21 @@ public final class Rows {
         public boolean isActive() { return "ACTIVE".equals(status); }
     }
 
-    public record OutboxRow(UUID eventId, UUID transferId, String eventType, String payload) {}
+    /** aggregateType is TRANSFER or BENEFICIARY (V8); it selects the Kafka topic and is the message key's owner. */
+    public record OutboxRow(UUID eventId, String aggregateType, UUID aggregateId, String eventType, String payload) {}
+
+    /**
+     * An outbox row exactly as stored. The publisher decodes it row by row ({@link #decode()}), so one row that cannot
+     * be decoded is quarantined instead of failing the whole poll and blocking every event behind it.
+     */
+    public record RawOutboxRow(byte[] key, String aggregateType, byte[] aggregateId, String eventType, String payload) {
+        /** Throws IllegalArgumentException if an id is not a 16-byte RAW. */
+        public OutboxRow decode() {
+            return new OutboxRow(Ids.fromBytes(key), aggregateType, Ids.fromBytes(aggregateId), eventType, payload);
+        }
+
+        public String keyHex() {
+            return java.util.HexFormat.of().formatHex(key);
+        }
+    }
 }

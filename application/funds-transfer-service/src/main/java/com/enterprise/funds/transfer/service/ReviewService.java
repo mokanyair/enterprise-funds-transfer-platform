@@ -5,11 +5,11 @@ import com.enterprise.funds.transfer.domain.ApiException;
 import com.enterprise.funds.transfer.domain.ErrorCode;
 import com.enterprise.funds.transfer.domain.TransferStateMachine;
 import com.enterprise.funds.transfer.domain.TransferStatus;
+import com.enterprise.funds.transfer.events.EventEnvelope;
 import com.enterprise.funds.transfer.persistence.AccountRepository;
 import com.enterprise.funds.transfer.persistence.Rows.AccountRow;
 import com.enterprise.funds.transfer.persistence.Rows.TransferView;
 import com.enterprise.funds.transfer.persistence.TransferRepository;
-import com.enterprise.funds.transfer.web.dto.TransferDto;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -61,14 +61,14 @@ public class ReviewService {
                 transfers.updateStatus(transferId, TransferStatus.PENDING_REVIEW, TransferStatus.PROCESSING, now);
                 transfers.updateStatus(transferId, TransferStatus.PROCESSING, TransferStatus.COMPLETED, now);
                 posting.apply(locked, transferId, source, destination, view.amount(), now);
-                return finish(operator, transferId, "TransferCompleted", "REVIEW_APPROVE", "SUCCESS", correlationId);
+                return finish(operator, transferId, EventEnvelope.TRANSFER_COMPLETED, "REVIEW_APPROVE", "SUCCESS", correlationId);
             } catch (ApiException e) {
                 if (e.status() != 422) {
                     throw e;
                 }
                 transfers.updateStatus(transferId, TransferStatus.PENDING_REVIEW,
                         TransferStateMachine.require(TransferStatus.PENDING_REVIEW, TransferStatus.REJECTED), now);
-                return finish(operator, transferId, "TransferRejected", "REVIEW_APPROVE", "DENIED", correlationId);
+                return finish(operator, transferId, EventEnvelope.TRANSFER_REJECTED, "REVIEW_APPROVE", "DENIED", correlationId);
             }
         });
     }
@@ -79,7 +79,7 @@ public class ReviewService {
             TransferView view = lockPending(transferId);
             transfers.updateStatus(transferId, view.status(),
                     TransferStateMachine.require(view.status(), TransferStatus.REJECTED), OffsetDateTime.now(clock));
-            return finish(operator, transferId, "TransferRejected", "REVIEW_REJECT", "SUCCESS", correlationId);
+            return finish(operator, transferId, EventEnvelope.TRANSFER_REJECTED, "REVIEW_REJECT", "SUCCESS", correlationId);
         });
     }
 
@@ -95,7 +95,7 @@ public class ReviewService {
                                 String correlationId) {
         TransferView after = transfers.findView(transferId).orElseThrow();
         audit.record(operator, action, "TRANSFER", transferId, outcome, correlationId, after.status().name());
-        outbox.write(eventType, transferId, TransferDto.from(after));
+        outbox.writeTransfer(eventType, after);
         return after;
     }
 

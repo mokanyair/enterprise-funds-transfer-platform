@@ -8,6 +8,7 @@ import com.enterprise.funds.transfer.domain.RiskDecision;
 import com.enterprise.funds.transfer.domain.Role;
 import com.enterprise.funds.transfer.domain.TransferStateMachine;
 import com.enterprise.funds.transfer.domain.TransferStatus;
+import com.enterprise.funds.transfer.events.EventEnvelope;
 import com.enterprise.funds.transfer.persistence.AccountRepository;
 import com.enterprise.funds.transfer.persistence.Ids;
 import com.enterprise.funds.transfer.persistence.RiskRepository;
@@ -164,7 +165,7 @@ public class TransferService {
         insertTransfer(actor, cmd, source, destination, transferId, status, now);
         riskRepo.insert(transferId, risk, now);
         posting.apply(locked, transferId, source, destination, cmd.amount(), now);
-        return finishCreated(actor, attempt, transferId, "TransferCompleted", correlationId);
+        return finishCreated(actor, attempt, transferId, EventEnvelope.TRANSFER_COMPLETED, correlationId);
     }
 
     private TxResult holdForReview(Actor actor, IdempotencyService.Begin.Proceed attempt, Command cmd,
@@ -175,7 +176,7 @@ public class TransferService {
                 TransferStatus.VALIDATING, TransferStatus.PENDING_REVIEW);
         insertTransfer(actor, cmd, source, destination, transferId, status, now);
         riskRepo.insert(transferId, risk, now);
-        return finishCreated(actor, attempt, transferId, "TransferPendingReview", correlationId);
+        return finishCreated(actor, attempt, transferId, EventEnvelope.TRANSFER_PENDING_REVIEW, correlationId);
     }
 
     private TxResult rejectByRisk(Actor actor, IdempotencyService.Begin.Proceed attempt, Command cmd,
@@ -189,9 +190,9 @@ public class TransferService {
         if (!idempotency.complete(attempt, transferId, rejection.status(), errorJson(rejection))) {
             throw new FencedOutException();
         }
-        TransferDto dto = TransferDto.from(transfers.findView(transferId).orElseThrow());
+        TransferView rejected = transfers.findView(transferId).orElseThrow();
         audit.record(actor, "TRANSFER_CREATE", "TRANSFER", transferId, "DENIED", correlationId, "REJECTED");
-        outbox.write("TransferRejected", transferId, dto);
+        outbox.writeTransfer(EventEnvelope.TRANSFER_REJECTED, rejected);
         return new TxResult(null, transferId, rejection);
     }
 
@@ -203,12 +204,13 @@ public class TransferService {
 
     private TxResult finishCreated(Actor actor, IdempotencyService.Begin.Proceed attempt, UUID transferId,
                                    String eventType, String correlationId) {
-        TransferDto dto = TransferDto.from(transfers.findView(transferId).orElseThrow());
+        TransferView created = transfers.findView(transferId).orElseThrow();
+        TransferDto dto = TransferDto.from(created);
         if (!idempotency.complete(attempt, transferId, 201, toJson(dto))) {
             throw new FencedOutException(); // rolls back the whole posting
         }
         audit.record(actor, "TRANSFER_CREATE", "TRANSFER", transferId, "SUCCESS", correlationId, dto.status());
-        outbox.write(eventType, transferId, dto);
+        outbox.writeTransfer(eventType, created);
         return new TxResult(dto, transferId, null);
     }
 
@@ -281,7 +283,7 @@ public class TransferService {
                     TransferStateMachine.require(view.status(), TransferStatus.CANCELLED), now);
             TransferView cancelled = transfers.findView(transferId).orElseThrow();
             audit.record(actor, "TRANSFER_CANCEL", "TRANSFER", transferId, "SUCCESS", correlationId, null);
-            outbox.write("TransferCancelled", transferId, TransferDto.from(cancelled));
+            outbox.writeTransfer(EventEnvelope.TRANSFER_CANCELLED, cancelled);
             return cancelled;
         });
     }

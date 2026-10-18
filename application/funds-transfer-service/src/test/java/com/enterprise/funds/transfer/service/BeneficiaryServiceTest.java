@@ -66,6 +66,7 @@ class BeneficiaryServiceTest {
     private final AccountRepository accounts = mock(AccountRepository.class);
     private final CustomerRepository customers = mock(CustomerRepository.class);
     private final AuditService audit = mock(AuditService.class);
+    private final OutboxWriter outbox = mock(OutboxWriter.class);
     private final RecordingTxManager txManager = new RecordingTxManager();
 
     private final UUID customerId = UUID.randomUUID();
@@ -91,7 +92,7 @@ class BeneficiaryServiceTest {
         FundsProperties props = TestProps.props(Duration.ofDays(7), Duration.ofSeconds(60), Duration.ofDays(90),
                 new BigDecimal("10000.00"), null, caps);
         return new BeneficiaryService(Clock.fixed(NOW, ZoneOffset.UTC), new TransactionTemplate(txManager),
-                beneficiaries, accounts, customers, audit, props);
+                beneficiaries, accounts, customers, audit, outbox, props);
     }
 
     private BeneficiaryRow row(UUID id, AccountRow account, String nickname, String status) {
@@ -140,6 +141,7 @@ class BeneficiaryServiceTest {
         assertThat(dto.accountId()).isEqualTo("ACC002");
         assertThat(dto.nickname()).isEqualTo("Rent - landlord");
         assertThat(txManager.commits).isEqualTo(1);
+        verify(outbox).writeBeneficiary(eq("BeneficiaryAdded"), any());
         verify(audit, never()).recordQuietly(any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -226,6 +228,7 @@ class BeneficiaryServiceTest {
         verify(customers).lock(customerId); // checked under the lock, not before it
         verify(beneficiaries, never()).insert(any(), any(), any(), any(), any(), any());
         assertThat(txManager.rollbacks).isEqualTo(1);
+        verifyNoInteractions(outbox);
     }
 
     @Test
@@ -323,6 +326,7 @@ class BeneficiaryServiceTest {
         when(beneficiaries.markDeleted(eq(customerId), eq(id), eq(alice.userId()), any())).thenReturn(true);
         service.delete(alice, id, "corr-d");
         verify(audit).record(alice, "BENEFICIARY_DELETE", "BENEFICIARY", id, "SUCCESS", "corr-d", null);
+        verify(outbox).writeBeneficiary(eq("BeneficiaryDeleted"), any());
         assertThat(txManager.commits).isEqualTo(1);
     }
 
@@ -332,7 +336,7 @@ class BeneficiaryServiceTest {
         when(beneficiaries.find(customerId, id)).thenReturn(Optional.of(row(id, theirs, "x", "DELETED")));
         service.delete(alice, id, "c");
         verify(beneficiaries, never()).markDeleted(any(), any(), any(), any());
-        verifyNoInteractions(audit);
+        verifyNoInteractions(audit, outbox);
     }
 
     @Test
@@ -340,7 +344,7 @@ class BeneficiaryServiceTest {
         UUID id = UUID.randomUUID();
         when(beneficiaries.markDeleted(any(), any(), any(), any())).thenReturn(false);
         service.delete(alice, id, "c");
-        verifyNoInteractions(audit);
+        verifyNoInteractions(audit, outbox); // only the winning delete emits BeneficiaryDeleted
     }
 
     @Test
