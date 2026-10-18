@@ -8,9 +8,10 @@ Implements the approved contract in `src/main/resources/openapi/` and the design
 | Area | State |
 |------|-------|
 | Compiles, packages | Yes (JDK 21) |
-| 129 unit and web-layer tests | **Pass** (JDK 21, 2026-10-18) |
-| 28 Oracle integration tests (`PostingIT` 14, `BeneficiaryIT` 9, `PrivilegeIT` 5) | **Pass** on a **disposable** Oracle Free 23.26 container (2026-10-18), runtime identity with the section 5 grants. They skip themselves without a database |
-| V1-V7 migrations | Apply cleanly with `flyway migrate` / `validate` on the same kind of disposable container |
+| 155 unit and web-layer tests | **Pass** (JDK 21, 2026-10-18) |
+| 32 integration tests (`PostingIT` 14, `BeneficiaryIT` 9, `PrivilegeIT` 5, `EventPipelineIT` 4) | **Pass** on a **disposable** Oracle Free 23.26 container plus a single-node Kafka 3.9.1 broker (2026-10-18), runtime identity with the section 5 grants. They skip themselves without a database (`EventPipelineIT` also needs `FUNDS_IT_KAFKA_BOOTSTRAP_SERVERS`) |
+| V1-V10 migrations | Apply cleanly with `flyway migrate` / `validate` on the same kind of disposable container |
+| Kafka | Publisher and notification consumer implemented, both **off by default**; see `docs/release-2-event-streaming.md` |
 | `bank-db-01` | Nothing has run there yet: migrations, grants and ITs are still to do |
 | Application start-up | Not attempted (needs a database and an identity provider) |
 
