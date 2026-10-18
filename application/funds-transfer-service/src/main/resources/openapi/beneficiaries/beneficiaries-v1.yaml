@@ -184,9 +184,10 @@ components:
       maxLength: 40
       description: |
         Display label chosen by the customer. Untrusted free text: trimmed on
-        input, must contain no control characters, and must be HTML-escaped on
-        display. Need not be unique.
-      pattern: '^[^\u0000-\u001F\u007F]+$'
+        input, then 1-40 characters (Unicode code points) with no control
+        characters (C0, DEL or C1); must be HTML-escaped on display. Need not be
+        unique.
+      pattern: '^[^\u0000-\u001F\u007F-\u009F]+$'
 
     CreateBeneficiaryRequest:
       type: object

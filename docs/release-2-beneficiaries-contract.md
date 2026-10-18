@@ -1,6 +1,6 @@
 # Release 2 - Beneficiaries: API Contract & Domain Design
 
-Status: **APPROVED v1.2.0 (2026-10-18).** Decisions B1-B8 approved as proposed. ERD and migration V7 done (`docs/milestone-2-erd.md` section 12); service, tests and UI not started.
+Status: **APPROVED v1.2.0 (2026-10-18).** Decisions B1-B8 approved as proposed. ERD and migration V7 done (`docs/milestone-2-erd.md` section 12). Service and endpoints implemented and tested (unit, web layer, Oracle IT). UI not started.
 Builds on the approved V1 contract (`docs/milestone-1-contract.md`) and ERD (`docs/milestone-2-erd.md`).
 
 Machine-readable contract: `application/funds-transfer-service/src/main/resources/openapi/beneficiaries/beneficiaries-v1.yaml`, wired into the root spec. All six specs pass `scripts/openapi.sh lint`.
@@ -140,5 +140,7 @@ Table **BENEFICIARIES** (13th table), created by `V7__create_beneficiaries.sql`.
 | Validation order and error table | Approved |
 | Decisions B1-B8 | Approved as proposed |
 | ERD / data dictionary / migration V7 | Done, verified on a disposable Oracle (ERD section 12) |
+| Service, endpoints, tests (section 7) | Done: `BeneficiaryService`, `BeneficiariesController`; 32 service + 12 web-layer unit tests, 9 Oracle ITs, all pass |
+| Banking UI screen | Not started |
 
 Housekeeping in this change: the root spec now also wires `GET /accounts`. It was already defined in `accounts-v1.yaml` and implemented, but missing from the root. All spec versions were bumped to 1.2.0.

@@ -32,5 +32,12 @@ public final class Rows {
             OffsetDateTime leaseExpiresAt, UUID transferId, Integer responseStatus, String responseBody,
             OffsetDateTime replayExpiresAt, OffsetDateTime responsePurgedAt) {}
 
+    /** A beneficiary with its destination's public account number. */
+    public record BeneficiaryRow(
+            UUID id, UUID customerId, UUID accountId, String accountNumber, String nickname, String status,
+            OffsetDateTime createdAt) {
+        public boolean isActive() { return "ACTIVE".equals(status); }
+    }
+
     public record OutboxRow(UUID eventId, UUID transferId, String eventType, String payload) {}
 }
