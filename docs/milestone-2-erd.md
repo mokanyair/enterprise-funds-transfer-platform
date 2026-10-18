@@ -2,6 +2,7 @@
 
 Status: **Design decisions P1-P9 APPROVED (2026-09-18).** Migrations V1-V6 written; see section 9 for test status.
 Builds on the approved contract in `docs/milestone-1-contract.md`.
+**Release 2:** `BENEFICIARIES` (13th table, migration V7) added per `docs/release-2-beneficiaries-contract.md` (B1-B8 approved 2026-10-18). Physical design in section 12.
 
 Already decided: UUID storage is `RAW(16)` everywhere (approved 2026-09-18).
 
@@ -42,6 +43,9 @@ erDiagram
     TRANSFERS ||--o{ OUTBOX_EVENTS : "publishes"
     TRANSFERS ||--o{ RECONCILIATION_RECORDS : "reconciled in"
     TRANSFERS |o--o| TRANSFERS : "reversal_of"
+    CUSTOMERS ||--o{ BENEFICIARIES : "saves (R2)"
+    ACCOUNTS  ||--o{ BENEFICIARIES : "saved as (R2)"
+    APP_USERS ||--o{ BENEFICIARIES : "created / deleted by (R2)"
 
     CUSTOMERS {
         RAW16 customer_id PK
@@ -124,6 +128,15 @@ erDiagram
         RAW16 transfer_id FK
         VARCHAR2 status
     }
+    BENEFICIARIES {
+        RAW16 beneficiary_id PK
+        RAW16 customer_id FK
+        RAW16 account_id FK "UK with customer_id while ACTIVE"
+        VARCHAR2 nickname
+        VARCHAR2 status "ACTIVE or DELETED"
+        RAW16 created_by_user_id FK
+        RAW16 deleted_by_user_id FK "nullable"
+    }
 ```
 
 Cardinality check against the approved contract:
@@ -138,6 +151,7 @@ Cardinality check against the approved contract:
 | Transfer -> Risk / Audit / Outbox 1:N | FKs (audit references the entity by ID, see section 3) |
 | Transfer -> Reconciliation 0:N | FK + `UNIQUE(RUN_ID, TRANSFER_ID)` |
 | Reversal is a new linked transfer | `TRANSFERS.REVERSAL_OF` self-FK, UNIQUE |
+| Customer -> Beneficiary 1:N, at most one active per account (R2, B3) | FK + function-based unique index `UX_BENEF_ACTIVE`. The 50-active cap (B5) is enforced in the service under the customer-row lock |
 
 ## 3. Data dictionary
 
@@ -320,6 +334,8 @@ Rule: an FK column is indexed only if it is queried, or its parent rows can be d
 | `IX_RECON_TRANSFER(TRANSFER_ID)` | Reconciliation history per transfer | Added |
 | `IX_IDEMP_LEASE(LEASE_EXPIRES_AT)` | Recovery: find expired `IN_PROGRESS` attempts | Added (A2). NULL except while in progress, so it holds only in-flight rows |
 | `IX_IDEMP_REPLAY_EXPIRY(REPLAY_EXPIRES_AT)` | Purge job: find bodies past retention | Added (A2). NULL once purged, so it holds only replayable rows |
+| `UX_BENEF_ACTIVE(CASE ACTIVE: CUSTOMER_ID, ACCOUNT_ID)` | One active beneficiary per (customer, account) | Release 2, V7. Unique, function-based; deleted rows are not indexed |
+| `IX_BENEF_CUSTOMER(CUSTOMER_ID, CREATED_AT)` | Beneficiary list; rolling 24 h add count (B5) | Release 2, V7 |
 
 **Briefing index dropped:** `LEDGER_ENTRIES(transfer_id)`. `UNIQUE(TRANSFER_ID, ENTRY_POSITION)` already has `TRANSFER_ID` as its leading column and serves every lookup by transfer. A separate index would be redundant, which the briefing says to avoid.
 
@@ -353,6 +369,7 @@ Object grants to `FUNDS_APP` (no table has `DELETE`; there are no sequences):
 | OUTBOX_EVENTS | Y | Y | Y | Publisher updates status and attempts |
 | AUDIT_EVENTS | Y | Y | | Immutable |
 | RECONCILIATION_RECORDS | Y | Y | | Runtime writes results unless P9 is adopted |
+| BENEFICIARIES (R2) | Y | Y | Y | Add; soft delete (`STATUS` -> `DELETED`). Trigger allows nothing else |
 
 Migration tests in Milestone 3 must prove `FUNDS_APP` cannot `CREATE`/`DROP` tables, cannot `DELETE`, cannot read other schemas, and cannot `UPDATE` ledger or audit rows.
 
@@ -372,8 +389,11 @@ Every table is created with its PK, FK, UNIQUE and CHECK constraints inline, so 
 | `V4__create_risk_and_audit.sql` | RISK_ASSESSMENTS, AUDIT_EVENTS (+ immutability trigger) | V1, V2 |
 | `V5__create_outbox_and_reconciliation.sql` | OUTBOX_EVENTS, RECONCILIATION_RECORDS | V2 |
 | `V6__create_indexes_and_constraints.sql` | All `IX_*` indexes in section 4 | V1-V5 |
+| `V7__create_beneficiaries.sql` (Release 2) | BENEFICIARIES, its two indexes, `TRG_BENEF_IMMUTABLE` | V1 |
 
-Deviation from the briefing to note: there are no forward-referencing FKs, so nothing has to wait for V6 and it contains only secondary indexes. The file name is kept as briefed. Total after V5: 12 tables.
+Deviation from the briefing to note: there are no forward-referencing FKs, so nothing has to wait for V6 and it contains only secondary indexes. The file name is kept as briefed. Total after V5: 12 tables; after V7: 13.
+
+From V7 on, migrations are additive only (briefing: "additive migrations only after release"): a new version per change, never an edit to V1-V6.
 
 ## 7. Retention, volume and sizing
 
@@ -532,3 +552,52 @@ UPDATE IDEMPOTENCY_RECORDS
 
 ### Tests required in Milestone 3
 Replay inside the window; `KEY_EXPIRED` after it with the same and with a different payload; body purge then retry; concurrent identical requests (one posts, the rest `IN_PROGRESS`); crash after T0 then retry; takeover race (two retries, one winner); **zombie original**: slow attempt is taken over and must roll back without posting; completion `UPDATE` with a stale `ATTEMPT` matches nothing; trigger rejects each forbidden change to a completed row and allows the body purge; `CK_IDEMP_*` violations; reconciler closes stale rows and flags each anomaly; a stored `422` replays with a fresh `correlationId`; expired key never creates a second ledger entry (assert ledger and balance unchanged).
+
+## 12. Beneficiaries (Release 2, migration V7)
+
+Contract and decisions B1-B8 (approved 2026-10-18): `docs/release-2-beneficiaries-contract.md`. Script: `V7__create_beneficiaries.sql`.
+
+### BENEFICIARIES
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| BENEFICIARY_ID | RAW(16) | NN | PK. UUIDv7 (P2). API `beneficiaryId` |
+| CUSTOMER_ID | RAW(16) | NN | FK -> CUSTOMERS. Owner (B2) |
+| ACCOUNT_ID | RAW(16) | NN | FK -> ACCOUNTS. Internal key (P1); the API shows `ACCOUNT_NUMBER` |
+| NICKNAME | VARCHAR2(40 CHAR) | NN | Untrusted text. CHECK `CK_BENEF_NICKNAME`: already trimmed, no control characters |
+| STATUS | VARCHAR2(10) | NN | CHECK IN (`ACTIVE`,`DELETED`) |
+| CREATED_BY_USER_ID | RAW(16) | NN | FK -> APP_USERS. From the token |
+| CREATED_AT | TIMESTAMP WITH TIME ZONE | NN | Default `SYSTIMESTAMP` |
+| DELETED_BY_USER_ID | RAW(16) | | FK -> APP_USERS |
+| DELETED_AT | TIMESTAMP WITH TIME ZONE | | |
+
+Table CHECK `CK_BENEF_DELETED`: both deletion columns are set exactly when `STATUS = 'DELETED'`.
+
+**Active uniqueness (B3).** `UX_BENEF_ACTIVE` is a unique function-based index on `(CASE WHEN STATUS='ACTIVE' THEN CUSTOMER_ID END, CASE WHEN STATUS='ACTIVE' THEN ACCOUNT_ID END)`. A deleted row's key is entirely NULL, and Oracle does not index all-NULL keys, so deleting frees the pair for a later re-add while history accumulates. A duplicate add that slips past the service check fails with `ORA-00001` on this index, which the service maps to `409 BENEFICIARY_ALREADY_EXISTS`.
+
+**Trigger `TRG_BENEF_IMMUTABLE`** (row-level, defence in depth beyond the approved outline, same pattern as the audit and idempotency triggers): refuses every `DELETE`, any update to a `DELETED` row, and any change to the ID, customer, account, nickname, creator or creation time. Only `ACTIVE -> DELETED` gets through. Error `ORA-20003` (`-20001` audit, `-20002` idempotency).
+
+**Not in the database, by design.** These rules need cross-row counting under a lock, so the service enforces them: the 50-active and 20-per-24 h caps (B5), the own-account rule (B6) and the destination-active rule (B4). The customer row (`SELECT ... FOR UPDATE` on `CUSTOMERS`, the same first lock as posting, A1) serialises concurrent adds for one customer. No transaction holds a beneficiary lock and then takes a balance lock, so the global lock order is unchanged.
+
+**Grants (provisioning, outside Flyway).** Run as `FUNDS_OWNER` once V7 is applied:
+```sql
+GRANT SELECT, INSERT, UPDATE ON FUNDS_OWNER.BENEFICIARIES TO FUNDS_APP;
+```
+No `DELETE` (P8). `PrivilegeIT` asserts this.
+
+**Audit.** Every add and delete writes `AUDIT_EVENTS` with `ENTITY_TYPE = 'BENEFICIARY'`, `ACTION` = `BENEFICIARY_ADD` or `BENEFICIARY_DELETE`, and outcome `SUCCESS`, or `FAILURE` for a business rejection. `DETAIL` never carries the nickname, because it is customer free text.
+
+**Retention and sizing.** At most 50 active rows per customer, plus deleted history (B5 bounds adds to 20 per day). A row is about 150 bytes, plus about 100 for indexes. Even 100,000 customers with 100 rows each comes to about 2.5 GB, but realistic use is a few dozen rows per customer, well under 100 MB, which is negligible beside transfers. Proposed retention: keep deleted rows as long as the audit trail, since they explain past audit events. Purging them would need the privileged purge job, not the runtime user.
+
+### Test status (2026-10-18)
+
+Run against a **disposable local Oracle Free 23.26 container** (not `bank-db-01`; removed afterwards), with Flyway 11.7.2 (the project's own dependency) as `FUNDS_OWNER`, which held only `CREATE SESSION`, `CREATE TABLE`, `CREATE TRIGGER`. Flyway warns that Oracle 23.26 is newer than it has been tested against; no migration was affected.
+
+| Check | Result |
+|-------|--------|
+| `migrate` to V6, then `migrate` to V7 (V7 applied on top of an existing V1-V6 schema) | 6 applied, then 1 applied, no errors |
+| `validate`; second `migrate` | Pass; 0 applied |
+| Inventory | 13 tables, 0 invalid objects, 3 triggers. BENEFICIARIES: 1 PK, 4 FK, 3 named CHECK, `UX_BENEF_ACTIVE` (unique, function-based), `IX_BENEF_CUSTOMER` |
+| 22 constraint/trigger checks as owner, all rolled back | 22 pass. Covers: duplicate active pair rejected; same account under two customers allowed; blank, padded, control-character and 41-character nicknames rejected; 40 non-ASCII characters accepted; bad status; DELETED without deletion columns; each FK; trigger refuses nickname, account and customer changes; soft delete allowed; deleted row frozen; re-add after delete allowed; `DELETE` refused even for the owner |
+| Runtime identity (`FUNDS_APP`, granted `SELECT, INSERT, UPDATE`) | Insert and soft delete succeed; `DELETE` refused by privilege (`ORA-41900` on 23.26, `ORA-01031` on older releases); `ALTER TABLE` and `DROP INDEX` refused |
+
+Not yet tested: the service-level rules (B4-B6 caps and validation, concurrency under the customer lock), which arrive with the service code; `EXPLAIN PLAN` for the list and 24 h count queries; anything on `bank-db-01`. `PrivilegeIT` now includes `BENEFICIARIES` in its no-`DELETE` list.

@@ -10,7 +10,8 @@ Implements the approved contract in `src/main/resources/openapi/` and the design
 | Compiles, packages | Yes (JDK 21) |
 | 83 unit and web-layer tests | **Pass** |
 | 19 Oracle integration tests (`*IT`) | Written, **never run** (they need a database; they skip themselves) |
-| SQL in the repositories, the V1-V6 migrations | **Never executed against Oracle** since the last edits |
+| V1-V7 migrations | Apply cleanly with `flyway migrate` / `validate` on a **disposable** Oracle Free 23.26 container (2026-10-18); V7 behaviour checks pass. Never run on `bank-db-01` |
+| SQL in the repositories | **Never executed against Oracle** since the last edits |
 | Application start-up | Not attempted (needs a database and an identity provider) |
 
 Treat the persistence layer as untested until the integration tests have passed once.

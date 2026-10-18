@@ -1,0 +1,250 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Beneficiaries
+  version: 1.2.0   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Release 2. Saved transfer recipients ("beneficiaries") for a customer.
+    **Status: APPROVED v1.2.0 (2026-10-18)** (`docs/release-2-beneficiaries-contract.md`).
+
+    A beneficiary is a nickname for an internal destination account. It is a
+    convenience only: `POST /transfers` is unchanged and still takes a
+    `destinationAccountId`, and every transfer re-validates the destination
+    (decision B1). Beneficiaries belong to the customer, so all users of a
+    customer see the same list. Depends on `common` and `identity`.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+paths:
+  /beneficiaries:
+    get:
+      operationId: listBeneficiaries
+      tags: [beneficiaries]
+      summary: List the caller's beneficiaries
+      x-authorization: CUSTOMER only. OPERATOR gets 403.
+      description: |
+        Active beneficiaries of the caller's customer, ordered by `nickname`
+        (case-insensitive), `beneficiaryId` as tiebreak. Deleted beneficiaries
+        are never returned. No pagination: the list is capped (decision B5).
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The caller's beneficiaries.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BeneficiaryList' }
+              example:
+                beneficiaries:
+                  - beneficiaryId: 01928f4e-7a1c-7d0e-9b53-6c8f2a1d7e90
+                    accountId: ACC002
+                    nickname: Rent - landlord
+                    createdAt: "2026-10-18T09:00:00.000Z"
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+    post:
+      operationId: createBeneficiary
+      tags: [beneficiaries]
+      summary: Add a beneficiary
+      x-authorization: CUSTOMER only. OPERATOR gets 403.
+      description: |
+        No `Idempotency-Key`: the unique (customer, account) rule makes a retry
+        safe. A retry after a lost response returns 409
+        `BENEFICIARY_ALREADY_EXISTS` with `Location` of the existing beneficiary,
+        and nothing is created twice (decision B3).
+
+        Validation order (first failure wins)
+        1. Schema -> 400. `nickname` is trimmed first; empty after trimming is a 400.
+        2. Account is one of the caller's own accounts -> 422 `BENEFICIARY_OWN_ACCOUNT`.
+        3. Account exists, is `ACTIVE`, and is in a supported currency -> otherwise
+           422 `ACCOUNT_INACTIVE`. Unknown and inactive accounts are
+           indistinguishable, exactly as for a transfer destination, so this
+           endpoint discloses nothing `POST /transfers` does not (decision B4).
+        4. Not already an active beneficiary of the customer -> 409
+           `BENEFICIARY_ALREADY_EXISTS`.
+        5. Active-count cap and daily-add cap -> 422 `BENEFICIARY_LIMIT_REACHED`
+           (decision B5).
+
+        Steps 4 and 5 are checked under the customer-row lock, so concurrent adds
+        cannot exceed either cap or create a duplicate.
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBeneficiaryRequest' }
+            example:
+              accountId: ACC002
+              nickname: Rent - landlord
+      responses:
+        '201':
+          description: Created.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Location: { $ref: '#/components/headers/BeneficiaryLocation' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Beneficiary' }
+              example:
+                beneficiaryId: 01928f4e-7a1c-7d0e-9b53-6c8f2a1d7e90
+                accountId: ACC002
+                nickname: Rent - landlord
+                createdAt: "2026-10-18T09:00:00.000Z"
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/AlreadyExists' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /beneficiaries/{beneficiaryId}:
+    get:
+      operationId: getBeneficiary
+      tags: [beneficiaries]
+      summary: Read one beneficiary
+      x-authorization: CUSTOMER whose customer owns it. OPERATOR gets 403. Otherwise 404.
+      description: |
+        Another customer's beneficiary, a deleted one, and an unknown ID all return
+        an identical 404.
+      parameters:
+        - $ref: '#/components/parameters/BeneficiaryId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The beneficiary.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Beneficiary' }
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+    delete:
+      operationId: deleteBeneficiary
+      tags: [beneficiaries]
+      summary: Delete a beneficiary
+      x-authorization: CUSTOMER whose customer owns it. OPERATOR gets 403. Otherwise 404.
+      description: |
+        Soft delete: the row is marked `DELETED` and kept for audit (the runtime
+        user has no `DELETE` privilege, P8). Past and in-flight transfers are
+        unaffected, because transfers never reference a beneficiary.
+
+        Idempotent: deleting a beneficiary the caller's customer already deleted
+        returns 204 again. Unknown IDs and other customers' beneficiaries return 404.
+      parameters:
+        - $ref: '#/components/parameters/BeneficiaryId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Deleted (or already deleted).
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../identity/identity-v1.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    BeneficiaryId:
+      name: beneficiaryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  headers:
+    BeneficiaryLocation:
+      description: URL of the beneficiary, e.g. `/api/v1/beneficiaries/{beneficiaryId}`.
+      schema: { type: string }
+    NoStore:
+      description: Always `no-store`. Keeps the recipient list out of shared and browser caches.
+      schema: { type: string, enum: [no-store] }
+
+  schemas:
+    Nickname:
+      type: string
+      minLength: 1
+      maxLength: 40
+      description: |
+        Display label chosen by the customer. Untrusted free text: trimmed on
+        input, must contain no control characters, and must be HTML-escaped on
+        display. Need not be unique.
+      pattern: '^[^\u0000-\u001F\u007F]+$'
+
+    CreateBeneficiaryRequest:
+      type: object
+      additionalProperties: false
+      required: [accountId, nickname]
+      properties:
+        accountId: { $ref: '../common/common-v1.yaml#/components/schemas/AccountId' }
+        nickname:  { $ref: '#/components/schemas/Nickname' }
+
+    Beneficiary:
+      type: object
+      description: |
+        Deliberately carries no account holder name, status or currency of the
+        destination account: those belong to another customer (decision B4).
+      required: [beneficiaryId, accountId, nickname, createdAt]
+      properties:
+        beneficiaryId: { type: string, format: uuid }
+        accountId:     { type: string }
+        nickname:      { type: string }
+        createdAt:     { type: string, format: date-time }
+
+    BeneficiaryList:
+      type: object
+      required: [beneficiaries]
+      properties:
+        beneficiaries:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Beneficiary' }
+
+  responses:
+    AlreadyExists:
+      description: |
+        `BENEFICIARY_ALREADY_EXISTS`: the account is already an active beneficiary
+        of the caller's customer. `Location` points at the existing one, so a
+        retried create can recover it.
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        Location: { $ref: '#/components/headers/BeneficiaryLocation' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          example:
+            code: BENEFICIARY_ALREADY_EXISTS
+            message: This account is already saved as a beneficiary.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-10-18T09:00:00.000Z"
+    Unprocessable:
+      description: |
+        Well-formed but fails business validation. Codes: `BENEFICIARY_OWN_ACCOUNT`,
+        `ACCOUNT_INACTIVE`, `BENEFICIARY_LIMIT_REACHED`.
+      headers:
+        X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '../common/common-v1.yaml#/components/schemas/Error' }
+          example:
+            code: ACCOUNT_INACTIVE
+            message: That account cannot receive transfers.
+            correlationId: 4f1c2b7a-9d3e-4c55-8a10-0e6b1d2f7a93
+            timestamp: "2026-10-18T09:00:00.000Z"
