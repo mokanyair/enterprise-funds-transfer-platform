@@ -501,3 +501,76 @@ table.data-table {
   width: 100%;
   max-width: 420px;
 }
+
+/* ---- notifications (Release 2) ---- */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--color-surface);
+}
+
+.segmented__option {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: var(--font-body);
+  color: var(--color-muted);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.segmented__option--active {
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+.notification--unread {
+  border-left: 3px solid var(--color-accent);
+}
+
+.notification__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  font-size: 18px;
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.bell:hover {
+  background: var(--color-bg);
+}
+
+.bell__badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}

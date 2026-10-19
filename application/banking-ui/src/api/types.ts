@@ -94,6 +94,55 @@ export interface CreateBeneficiaryRequest {
   nickname: string;
 }
 
+// ---- Release 2: notifications (openapi/notifications/notifications-v1.yaml)
+
+export type NotificationCategory = "TRANSACTION" | "SECURITY" | "ACCOUNT";
+
+/** Open set (N2): render unknown types generically rather than fail. */
+export type NotificationType =
+  | "TRANSFER_SENT"
+  | "TRANSFER_RECEIVED"
+  | "TRANSFER_UNDER_REVIEW"
+  | "TRANSFER_REJECTED"
+  | "TRANSFER_CANCELLED"
+  | "BENEFICIARY_ADDED"
+  | "BENEFICIARY_DELETED"
+  | (string & {});
+
+export interface NotificationParams {
+  transferId?: string;
+  amount?: string;
+  currency?: string;
+  counterpartyLast4?: string;
+  beneficiaryId?: string;
+  accountIdLast4?: string;
+}
+
+export interface AppNotification {
+  notificationId: string;
+  category: NotificationCategory;
+  type: NotificationType;
+  entityType: "TRANSFER" | "BENEFICIARY";
+  entityId: string;
+  params: NotificationParams;
+  occurredAt: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface NotificationPage {
+  items: AppNotification[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  unreadCount: number;
+}
+
+export interface UnreadCount {
+  unreadCount: number;
+}
+
 export type ApiErrorCode =
   | "INVALID_REQUEST"
   | "UNAUTHENTICATED"

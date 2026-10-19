@@ -6,7 +6,12 @@ import {
   accountsForCustomer,
   activeBeneficiaries,
   mockBeneficiaries,
+  mockNotifications,
+  notificationsFor,
+  notifyBeneficiary,
+  notifyTransfer,
   toBeneficiary,
+  toNotification,
   findAccount,
   idempotencyStore,
   mockTransfers,
@@ -70,6 +75,7 @@ function scheduleProgression(transferId: string, steps: { status: TransferStatus
 function applyStep(transfer: Transfer, status: TransferStatus) {
   transfer.status = status;
   transfer.updatedAt = new Date().toISOString();
+  notifyTransfer(transfer, status);
   if (status === "COMPLETED") {
     const source = findAccount(transfer.sourceAccountId);
     const destination = findAccount(transfer.destinationAccountId);
@@ -192,6 +198,7 @@ export const handlers = [
     }
 
     if (transfer.status === "PENDING_REVIEW") {
+      notifyTransfer(transfer, "PENDING_REVIEW");
       scheduleProgression(transferId, [
         { status: "PROCESSING", delayMs: 4000 },
         { status: "COMPLETED", delayMs: 2500 },
@@ -234,6 +241,7 @@ export const handlers = [
     for (const handle of timers.get(transfer.transferId) ?? []) clearTimeout(handle);
     transfer.status = "CANCELLED";
     transfer.updatedAt = new Date().toISOString();
+    notifyTransfer(transfer, "CANCELLED");
     return HttpResponse.json(transfer, { headers: { "X-Correlation-Id": correlationId } });
   }),
 
@@ -285,6 +293,7 @@ export const handlers = [
       createdAt: new Date().toISOString(),
     };
     mockBeneficiaries.push(created);
+    notifyBeneficiary(created, "BENEFICIARY_ADDED");
     return HttpResponse.json(toBeneficiary(created), {
       status: 201,
       headers: { "X-Correlation-Id": correlationId, Location: `/api/v1/beneficiaries/${created.beneficiaryId}` },
@@ -297,7 +306,66 @@ export const handlers = [
     if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
     const row = mockBeneficiaries.find((b) => b.beneficiaryId === params.beneficiaryId && b.customerSubject === subject);
     if (!row) return fail(404, "NOT_FOUND", "The requested resource was not found.", correlationId);
+    if (row.status === "ACTIVE") notifyBeneficiary(row, "BENEFICIARY_DELETED"); // only the first delete emits
     row.status = "DELETED"; // soft delete; repeating it is 204 again (B7)
+    return new HttpResponse(null, { status: 204, headers: { "X-Correlation-Id": correlationId } });
+  }),
+
+  // ---- Release 2: notifications. Same rules as NotificationService (docs/release-2-notifications-contract.md).
+
+  http.get(`${base}/notifications`, ({ request }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get("page") ?? 0);
+    const size = Number(url.searchParams.get("size") ?? 20);
+    const category = url.searchParams.get("category");
+    const unreadOnly = url.searchParams.get("unreadOnly") === "true";
+    if (!Number.isInteger(page) || page < 0 || !Number.isInteger(size) || size < 1 || size > 50
+        || (category && !["TRANSACTION", "SECURITY", "ACCOUNT"].includes(category))) {
+      return fail(400, "INVALID_REQUEST", "The request is invalid.", correlationId);
+    }
+    const all = notificationsFor(subject, category, unreadOnly);
+    return HttpResponse.json(
+      {
+        items: all.slice(page * size, page * size + size).map(toNotification),
+        page,
+        size,
+        totalElements: all.length,
+        totalPages: Math.ceil(all.length / size),
+        unreadCount: notificationsFor(subject, null, true).length,
+      },
+      { headers: { "X-Correlation-Id": correlationId, "Cache-Control": "no-store" } },
+    );
+  }),
+
+  http.get(`${base}/notifications/unread-count`, ({ request }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    return HttpResponse.json(
+      { unreadCount: notificationsFor(subject, null, true).length },
+      { headers: { "X-Correlation-Id": correlationId, "Cache-Control": "no-store" } },
+    );
+  }),
+
+  http.post(`${base}/notifications/read-all`, ({ request }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    const now = new Date().toISOString();
+    for (const n of notificationsFor(subject, null, true)) if (n.createdAt <= now) n.readAt = now;
+    return new HttpResponse(null, { status: 204, headers: { "X-Correlation-Id": correlationId } });
+  }),
+
+  http.post(`${base}/notifications/:notificationId/read`, ({ request, params }) => {
+    const correlationId = correlationIdFrom(request);
+    const subject = subjectFrom(request);
+    if (!subject) return fail(401, "UNAUTHENTICATED", "Authentication is required.", correlationId);
+    const n = mockNotifications.find((x) => x.notificationId === params.notificationId && x.customerSubject === subject);
+    if (!n) return fail(404, "NOT_FOUND", "The requested resource was not found.", correlationId);
+    n.readAt ??= new Date().toISOString(); // idempotent: the first readAt is kept (N5)
     return new HttpResponse(null, { status: 204, headers: { "X-Correlation-Id": correlationId } });
   }),
 ];
