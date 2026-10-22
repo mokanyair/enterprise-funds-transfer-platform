@@ -1,10 +1,13 @@
 pipeline {
-    agent { label 'ec2-linux' }
+    agent {
+        label 'ec2-linux'
+    }
 
     options {
         timestamps()
         timeout(time: 45, unit: 'MINUTES')
         disableConcurrentBuilds()
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -13,82 +16,87 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
+
+        stage('Checkout Source Code') {
             steps {
                 checkout scm
+
                 sh '''
                     set -eu
+
+                    echo "=== Git Commit ==="
                     git rev-parse --short HEAD
-                    git status --short
+
+                    echo "=== Repository ==="
+                    pwd
+
+                    echo "=== Agent ==="
+                    hostname
+                    whoami
                 '''
             }
         }
 
-        stage('Discover Modules') {
+        stage('Validate Build Tools') {
             steps {
                 sh '''
                     set -eu
 
-                    echo "=== Maven modules ==="
-                    find . -maxdepth 4 -name pom.xml \
-                        -not -path '*/target/*' -print
-
-                    echo "=== Node modules ==="
-                    find . -maxdepth 4 -name package.json \
-                        -not -path '*/node_modules/*' -print
+                    java -version
+                    mvn -version
+                    node --version
+                    npm --version
+                    git --version
+                    aws --version
                 '''
             }
         }
 
         stage('Backend Build and Unit Tests') {
             steps {
-                sh '''
-                    set -eu
+                dir('application/funds-transfer-service') {
+                    sh '''
+                        set -eu
 
-                    if [ -f pom.xml ]; then
-                        mvn -B -ntp -DskipITs=true clean verify
-                    elif [ -f backend/pom.xml ]; then
-                        mvn -B -ntp -f backend/pom.xml \
-                            -DskipITs=true clean verify
-                    else
-                        echo "ERROR: Backend pom.xml not found"
-                        exit 1
-                    fi
-                '''
+                        echo "=== Spring Boot Backend ==="
+
+                        mvn -B -ntp \
+                            -DskipITs=true \
+                            clean verify
+                    '''
+                }
             }
         }
 
         stage('Frontend Validation and Build') {
             steps {
-                sh '''
-                    set -eu
+                dir('application/banking-ui') {
+                    sh '''
+                        set -eu
 
-                    if [ -f frontend/package.json ]; then
-                        cd frontend
-                    elif [ -f package.json ]; then
-                        :
-                    else
-                        echo "ERROR: Frontend package.json not found"
-                        exit 1
-                    fi
+                        echo "=== Install Dependencies ==="
+                        npm ci
 
-                    npm ci
-                    npm run verify
-                    npm audit --audit-level=high
-                '''
+                        echo "=== TypeScript, Tests and Build ==="
+                        npm run verify
+
+                        echo "=== Dependency Security Audit ==="
+                        npm audit --audit-level=high
+                    '''
+                }
             }
         }
 
         stage('Archive Build Artifacts') {
             steps {
                 archiveArtifacts(
-                    artifacts: '**/target/*.jar,**/dist/**',
+                    artifacts: 'application/funds-transfer-service/target/*.jar,application/banking-ui/dist/**',
                     fingerprint: true,
                     allowEmptyArchive: false
                 )
 
                 junit(
-                    testResults: '**/target/surefire-reports/*.xml',
+                    testResults: 'application/funds-transfer-service/target/surefire-reports/*.xml',
                     allowEmptyResults: false
                 )
             }
@@ -97,11 +105,11 @@ pipeline {
 
     post {
         success {
-            echo 'Banking APP CI validation completed successfully.'
+            echo 'SUCCESS: Banking APP CI pipeline completed.'
         }
 
         failure {
-            echo 'Banking APP CI failed. Review the failing stage.'
+            echo 'FAILED: Review the Jenkins console output.'
         }
 
         always {
