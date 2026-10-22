@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createKeycloakTokenSource, MIN_TOKEN_VALIDITY_SECONDS, type KeycloakLike } from "./keycloakTokenSource";
 
 function fakeKeycloak(updateToken: KeycloakLike["updateToken"]): KeycloakLike & { login: ReturnType<typeof vi.fn> } {
-  return { token: "tok", updateToken: vi.fn(updateToken), login: vi.fn() };
+  return { token: "tok", updateToken: vi.fn(updateToken), login: vi.fn<() => Promise<void>>(() => Promise.resolve()) };
 }
 
 describe("createKeycloakTokenSource", () => {
