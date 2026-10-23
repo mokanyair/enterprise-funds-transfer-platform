@@ -406,6 +406,7 @@ Every table is created with its PK, FK, UNIQUE and CHECK constraints inline, so 
 | `V8__generalize_outbox_events.sql` (Release 2) | `OUTBOX_EVENTS.AGGREGATE_TYPE`/`AGGREGATE_ID`, `TRANSFER_ID` nullable, two CHECKs | V5 |
 | `V9__create_notifications.sql` (Release 2) | NOTIFICATIONS, `IX_NOTIF_CUSTOMER`, `TRG_NOTIF_IMMUTABLE` | V1 |
 | `V10__constrain_outbox_id_lengths.sql` (Release 2) | `CK_OUTBOX_EVENT_ID_LEN`, `CK_OUTBOX_AGG_ID_LEN` (IDs exactly 16 bytes) | V8 |
+| `V11__index_unread_notifications.sql` (Release 2) | `IX_NOTIF_UNREAD` (unread rows only) | V9 |
 
 Deviation from the briefing to note: there are no forward-referencing FKs, so nothing has to wait for V6 and it contains only secondary indexes. The file name is kept as briefed. Total after V5: 12 tables; after V7: 13; after V9: 14.
 
@@ -663,3 +664,22 @@ Disposable Oracle Free 23.26 plus a single-node Apache Kafka 3.9.1 broker with t
 | Whole suite, including the earlier ITs on V9 | 150 unit + 32 IT pass. After the run: 77/77 outbox events `PUBLISHED`, all 7 notification types present, 0 duplicate (event, customer) pairs |
 
 Found while testing: a pending outbox row whose ID cannot be decoded made every publisher poll fail, so nothing behind it was sent. **Fixed** (gap G12, `docs/release-2-event-streaming.md` section 8): the publisher now decodes row by row and quarantines a bad row as `FAILED`, and **V10** adds `CK_OUTBOX_EVENT_ID_LEN` / `CK_OUTBOX_AGG_ID_LEN` so such a row can no longer be written.
+
+## 14. Notifications read side (Release 2, V11)
+
+Contract and decisions N1-N7: `docs/release-2-notifications-contract.md`. No new table, column or grant: the API reads `NOTIFICATIONS` (section 13) and sets `READ_AT`, which `TRG_NOTIF_IMMUTABLE` already allows once.
+
+| Index | Expression | Serves |
+|-------|------------|--------|
+| `IX_NOTIF_CUSTOMER` (V9) | `(CUSTOMER_ID, CREATED_AT)` | The inbox list, newest first |
+| `IX_NOTIF_UNREAD` (V11) | `(CASE WHEN READ_AT IS NULL THEN CUSTOMER_ID END)` | Unread count (badge poll), `unreadOnly`, `read-all` |
+
+`IX_NOTIF_UNREAD` holds only unread rows, because Oracle does not index all-NULL keys, so it stays small as notices are read. Queries must use the same `CASE` expression to use it (`NotificationRepository.UNREAD_OF_CUSTOMER`). A plain `(CUSTOMER_ID, READ_AT)` index was tried first and rejected: Oracle indexes a `TIMESTAMP WITH TIME ZONE` column as `SYS_EXTRACT_UTC(READ_AT)`, which `READ_AT IS NULL` cannot use, so the plan still read the table.
+
+### Test status (2026-10-18)
+
+| Check | Result |
+|-------|--------|
+| `migrate` V1-V10, then V11; `validate` | 10, then 1 applied; 0 invalid objects |
+| Plan on 5,000 rows, 10 unread, fresh statistics | Count: `INDEX RANGE SCAN IX_NOTIF_UNREAD` only, no table access; the index held 10 entries. `read-all`: range scan of the same index, then the 10 rows |
+| `NotificationIT` (app as `FUNDS_APP`) | 5/5, including an EXPLAIN PLAN check that the count stays index-only |

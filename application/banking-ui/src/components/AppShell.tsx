@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useUnreadCount } from "../hooks/useNotifications";
 import { env } from "../lib/env";
 
 const NAV_ITEMS = [
@@ -16,6 +17,26 @@ function navClassName({ isActive }: { isActive: boolean }) {
 
 function bottomNavClassName({ isActive }: { isActive: boolean }) {
   return `bottomnav-link${isActive ? " bottomnav-link--active" : ""}`;
+}
+
+/** Top-bar bell. A failed count just hides the badge; the inbox itself still works. */
+export function NotificationBell() {
+  const { data } = useUnreadCount();
+  const unread = data?.unreadCount ?? 0;
+  return (
+    <NavLink
+      to="/notifications"
+      className="bell"
+      aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+    >
+      <span aria-hidden="true">🔔</span>
+      {unread > 0 && (
+        <span className="bell__badge" aria-hidden="true">
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+    </NavLink>
+  );
 }
 
 export function AppShell() {
@@ -45,6 +66,7 @@ export function AppShell() {
           {env.useMocks ? "Development" : "NovaBank"}
         </span>
         <div className="row" style={{ gap: 12 }}>
+          <NotificationBell />
           <NavLink to="/profile" className="metadata" aria-label="Profile">
             {user?.name ?? "Profile"}
           </NavLink>
