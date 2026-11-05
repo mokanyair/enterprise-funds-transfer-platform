@@ -52,6 +52,24 @@ pipeline {
             }
         }
 
+        stage('Prepare Security Scanners') {
+            steps {
+                sh '''
+                    set -eu
+                    bash ci/security/install-scanners.sh
+                '''
+            }
+        }
+
+        stage('Security Scanning') {
+            steps {
+                sh '''
+                    set -eu
+                    bash ci/security/run-scans.sh
+                '''
+            }
+        }
+
         stage('Backend Build and Unit Tests') {
             steps {
                 dir('application/funds-transfer-service') {
@@ -113,6 +131,11 @@ pipeline {
         }
 
         always {
+            archiveArtifacts(
+                artifacts: 'security-reports/*.json',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
             cleanWs()
         }
     }
