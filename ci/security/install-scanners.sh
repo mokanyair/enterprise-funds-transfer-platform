@@ -1,50 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOOLS_DIR="${WORKSPACE:-$PWD}/.ci-tools"
-BIN_DIR="$TOOLS_DIR/bin"
+ROOT="${WORKSPACE:-$PWD}"
+TOOLS_DIR="$ROOT/.ci-tools"
 VENV_DIR="$TOOLS_DIR/venv"
+BIN_DIR="$TOOLS_DIR/bin"
 
-SEMGREP_VERSION="1.183.0"
-CHECKOV_VERSION="3.4.3"
 GITLEAKS_VERSION="8.24.3"
+ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+CHECKSUM_FILE="$ROOT/ci/security/checksums/gitleaks.sha256"
 
 mkdir -p "$BIN_DIR"
-export PATH="$BIN_DIR:$PATH"
 
-echo "=== Validate Python 3.11 ==="
-
+echo "=== Python 3.11 ==="
 if ! command -v python3.11 >/dev/null 2>&1; then
-    echo "Python 3.11 missing. Installing..."
-    sudo dnf install -y python3.11
+    sudo dnf install -y python3.11 python3.11-pip
 fi
-
-python3.11 --version
-
-echo "=== Install Semgrep and Checkov ==="
 
 python3.11 -m venv "$VENV_DIR"
 
+echo "=== Install hash-locked dependencies ==="
 "$VENV_DIR/bin/python" -m pip install \
-    "semgrep==$SEMGREP_VERSION" \
-    "checkov==$CHECKOV_VERSION"
+    --require-hashes \
+    --no-cache-dir \
+    --quiet \
+    -r "$ROOT/ci/security/requirements.lock"
 
-echo "=== Install Gitleaks ==="
+echo "=== Download Gitleaks ==="
+curl -fsSL --retry 3 \
+    "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ARCHIVE}" \
+    -o "$TOOLS_DIR/$ARCHIVE"
 
-ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ARCHIVE}"
+echo "=== Verify Gitleaks SHA-256 ==="
+(
+    cd "$TOOLS_DIR"
+    sha256sum -c "$CHECKSUM_FILE"
+)
 
-curl -fL --retry 3 "$URL" -o "$TOOLS_DIR/$ARCHIVE"
-
-tar -xzf "$TOOLS_DIR/$ARCHIVE" \
-    -C "$BIN_DIR" gitleaks
-
+echo "=== Extract verified Gitleaks ==="
+tar -xzf "$TOOLS_DIR/$ARCHIVE" -C "$BIN_DIR" gitleaks
 chmod +x "$BIN_DIR/gitleaks"
 
-echo "=== Installed Versions ==="
+echo "=== Validate scanner versions ==="
+test "$("$VENV_DIR/bin/semgrep" --version)" = "1.183.0"
+test "$("$VENV_DIR/bin/checkov" --version)" = "3.4.3"
+"$BIN_DIR/gitleaks" version | grep -Fq "$GITLEAKS_VERSION"
 
-"$VENV_DIR/bin/semgrep" --version
-"$VENV_DIR/bin/checkov" --version
-"$BIN_DIR/gitleaks" version
+"$VENV_DIR/bin/python" -m pip check
 
-echo "SECURITY TOOL INSTALLATION COMPLETE"
+echo "PASS: Security scanners installed and verified"
