@@ -14,6 +14,7 @@ cd "$ROOT"
 echo "=== Gitleaks: Git Repository ==="
 
 gitleaks git . \
+    --config ci/security/gitleaks.toml \
     --report-format json \
     --report-path "$REPORTS/gitleaks.json" \
     --exit-code 1

@@ -1,21 +1,4 @@
-title = "Enterprise Funds Transfer Gitleaks Configuration"
+title = "Enterprise Funds Transfer Security Scanning"
 
 [extend]
 useDefault = true
-
-[[allowlists]]
-description = "Historical UUID idempotency-key examples in documentation and tests"
-targetRules = ["generic-api-key"]
-condition = "AND"
-commits = [
-  "65efd5c3b7386cba20bed2b535d48a4802cb2cdb",
-  "32aaf09e5adf70fab97066866e5a463e1f9c1109"
-]
-paths = [
-  '''^docs/milestone-1-contract\.md$''',
-  '''^application/funds-transfer-service/src/test/java/com/enterprise/funds/transfer/web/WebLayerTest\.java$'''
-]
-regexTarget = "match"
-regexes = [
-  '''(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
-]
