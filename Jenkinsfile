@@ -24,14 +24,21 @@ pipeline {
                 checkout scm
 
                 script {
-                    def branchName = env.GIT_BRANCH ?: ''
+                    def headCommit = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
 
-                    env.SONAR_ANALYSIS_ENABLED = (
-                        branchName == 'main' ||
-                        branchName == 'origin/main'
-                    ).toString()
+                    def mainCommit = sh(
+                        script: 'git rev-parse refs/remotes/origin/main',
+                        returnStdout: true
+                    ).trim()
 
-                    echo "Git branch: ${branchName}"
+                    env.SONAR_ANALYSIS_ENABLED =
+                        (headCommit == mainCommit).toString()
+
+                    echo "Checked-out commit: ${headCommit}"
+                    echo "origin/main commit: ${mainCommit}"
                     echo "SonarQube analysis enabled: ${env.SONAR_ANALYSIS_ENABLED}"
                 }
 
