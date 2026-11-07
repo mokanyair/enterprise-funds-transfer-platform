@@ -6,7 +6,7 @@ TOOLS_DIR="$ROOT/.ci-tools"
 VENV_DIR="$TOOLS_DIR/venv"
 BIN_DIR="$TOOLS_DIR/bin"
 
-GITLEAKS_VERSION="8.24.3"
+GITLEAKS_VERSION="8.30.1"
 ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
 CHECKSUM_FILE="$ROOT/ci/security/checksums/gitleaks.sha256"
 

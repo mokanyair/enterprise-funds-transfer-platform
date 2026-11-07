@@ -14,7 +14,6 @@ pipeline {
     environment {
         FUNDS_IT_ENABLED = 'false'
         CI = 'true'
-        SONAR_ANALYSIS_ENABLED = 'false'
     }
 
     stages {
