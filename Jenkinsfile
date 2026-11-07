@@ -1,3 +1,4 @@
+
 pipeline {
     agent {
         label 'ec2-linux'
@@ -5,7 +6,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 45, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
     }
@@ -13,6 +14,7 @@ pipeline {
     environment {
         FUNDS_IT_ENABLED = 'false'
         CI = 'true'
+        SONAR_ANALYSIS_ENABLED = 'false'
     }
 
     stages {
@@ -20,6 +22,18 @@ pipeline {
         stage('Checkout Source Code') {
             steps {
                 checkout scm
+
+                script {
+                    def branchName = env.GIT_BRANCH ?: ''
+
+                    env.SONAR_ANALYSIS_ENABLED = (
+                        branchName == 'main' ||
+                        branchName == 'origin/main'
+                    ).toString()
+
+                    echo "Git branch: ${branchName}"
+                    echo "SonarQube analysis enabled: ${env.SONAR_ANALYSIS_ENABLED}"
+                }
 
                 sh '''
                     set -eu
@@ -81,6 +95,9 @@ pipeline {
                         mvn -B -ntp \
                             -DskipITs=true \
                             clean verify
+
+                        echo "=== Verify JaCoCo XML ==="
+                        test -s target/site/jacoco/jacoco.xml
                     '''
                 }
             }
@@ -98,9 +115,112 @@ pipeline {
                         echo "=== TypeScript, Tests and Build ==="
                         npm run verify
 
+                        echo "=== Generate LCOV Coverage ==="
+                        npm run test:coverage
+
+                        echo "=== Verify LCOV ==="
+                        test -s coverage/lcov.info
+
                         echo "=== Dependency Security Audit ==="
                         npm audit --audit-level=high
                     '''
+                }
+            }
+        }
+
+        stage('SonarQube Backend Analysis') {
+            when {
+                expression {
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                dir('application/funds-transfer-service') {
+                    script {
+                        def scannerHome = tool 'sonar-scanner-cli'
+
+                        withSonarQubeEnv(
+                            installationName: 'banking-sonarqube',
+                            credentialsId: 'sonarqube-backend-token'
+                        ) {
+                            withEnv(["SCANNER_HOME=${scannerHome}"]) {
+                                sh '''
+                                    set -eu
+
+                                    test -s target/site/jacoco/jacoco.xml
+
+                                    "$SCANNER_HOME/bin/sonar-scanner" \
+                                      -Dsonar.projectKey=banking-funds-transfer-backend \
+                                      -Dsonar.projectName=banking-funds-transfer-backend \
+                                      -Dsonar.sources=src/main/java \
+                                      -Dsonar.tests=src/test/java \
+                                      -Dsonar.java.binaries=target/classes \
+                                      -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Backend Quality Gate') {
+            when {
+                expression {
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('SonarQube Frontend Analysis') {
+            when {
+                expression {
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                dir('application/banking-ui') {
+                    script {
+                        def scannerHome = tool 'sonar-scanner-cli'
+
+                        withSonarQubeEnv(
+                            installationName: 'banking-sonarqube',
+                            credentialsId: 'sonarqube-frontend-token'
+                        ) {
+                            withEnv(["SCANNER_HOME=${scannerHome}"]) {
+                                sh '''
+                                    set -eu
+
+                                    test -s coverage/lcov.info
+
+                                    "$SCANNER_HOME/bin/sonar-scanner" \
+                                      -Dsonar.projectKey=banking-funds-transfer-frontend \
+                                      -Dsonar.projectName=banking-funds-transfer-frontend \
+                                      -Dsonar.sources=src \
+                                      '-Dsonar.exclusions=**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx' \
+                                      -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Frontend Quality Gate') {
+            when {
+                expression {
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
@@ -111,11 +231,6 @@ pipeline {
                     artifacts: 'application/funds-transfer-service/target/*.jar,application/banking-ui/dist/**',
                     fingerprint: true,
                     allowEmptyArchive: false
-                )
-
-                junit(
-                    testResults: 'application/funds-transfer-service/target/surefire-reports/*.xml',
-                    allowEmptyResults: false
                 )
             }
         }
@@ -131,11 +246,17 @@ pipeline {
         }
 
         always {
+            junit(
+                testResults: 'application/funds-transfer-service/target/surefire-reports/*.xml',
+                allowEmptyResults: true
+            )
+
             archiveArtifacts(
                 artifacts: 'security-reports/*.json',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
+
             cleanWs()
         }
     }
