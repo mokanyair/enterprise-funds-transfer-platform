@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useAccountBalance } from "../../hooks/useAccountBalance";
 import { useAccountHistory } from "../../hooks/useAccountHistory";
+import { useAccounts } from "../../hooks/useAccounts";
 import { CurrencyDisplay } from "../../components/CurrencyDisplay";
 import { MaskedAccountNumber } from "../../components/MaskedAccountNumber";
 import { Skeleton } from "../../components/Skeleton";
@@ -11,6 +12,8 @@ export function AccountDetailPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const balanceQuery = useAccountBalance(accountId);
   const historyQuery = useAccountHistory(accountId, { page: 0, size: 10 });
+  // Balance has no status field; the account list does. Until it loads, no transfer action is offered.
+  const account = useAccounts().data?.accounts.find((a) => a.accountId === accountId);
 
   return (
     <div className="stack" style={{ gap: "var(--space-3)" }}>
@@ -45,11 +48,18 @@ export function AccountDetailPage() {
         </div>
       </div>
 
-      <div className="row">
-        <Link to={`/transfers/new?from=${encodeURIComponent(accountId ?? "")}`} className="btn btn--primary">
-          Transfer from this account
-        </Link>
-      </div>
+      {account?.status === "ACTIVE" && (
+        <div className="row">
+          <Link to={`/transfers/new?from=${encodeURIComponent(accountId ?? "")}`} className="btn btn--primary">
+            Transfer from this account
+          </Link>
+        </div>
+      )}
+      {account && account.status !== "ACTIVE" && (
+        <div className="alert alert--warning" role="status">
+          This account is {account.status === "FROZEN" ? "frozen" : "closed"}, so it can't send transfers.
+        </div>
+      )}
 
       <section className="stack">
         <div className="row" style={{ justifyContent: "space-between" }}>

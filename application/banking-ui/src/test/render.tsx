@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { DevAuthProvider } from "../auth/DevAuthProvider";
 
 export const CUSTOMER_1 = { name: "Jordan Reyes", subject: "customer-1" };
@@ -12,16 +12,25 @@ export function renderRoute(element: ReactElement, { path = "/", url = path }: {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[url]}>
         <DevAuthProvider>
           <Routes>
             <Route path={path} element={element} />
-            <Route path="/transfers/:transferId" element={<p>Transfer detail page</p>} />
+            {path !== "/transfers/:transferId" && (
+              <Route path="/transfers/:transferId" element={<TransferIdProbe />} />
+            )}
           </Routes>
         </DevAuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
+}
+
+/** Stand-in for the transfer detail page: shows which transfer the app navigated to. */
+function TransferIdProbe() {
+  const { transferId } = useParams();
+  return <p>Transfer detail page {transferId}</p>;
 }
