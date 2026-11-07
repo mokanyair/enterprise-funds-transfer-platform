@@ -46,3 +46,6 @@ target/
 # Editor/script backups
 *.bak
 *.bak.*
+
+# Generated frontend coverage
+/application/banking-ui/coverage/
