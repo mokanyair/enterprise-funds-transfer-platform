@@ -5,7 +5,7 @@ React + TypeScript + Vite frontend for `funds-transfer-service`, built from
 Release 1 (MVP) screens — dashboard, accounts, account detail, transfer (form → review →
 idempotent submit → status), transaction history/detail, profile and sign-out — wired to the
 real backend contract. Login/MFA is delegated entirely to Keycloak and is out of scope for this UI.
-Release 2 adds **Beneficiaries** (see "Release 2 status" below).
+Release 2 adds **Beneficiaries** and **Notifications** (see "Release 2 status" below).
 
 ## Quick start (mock data, no backend needed)
 
@@ -173,8 +173,23 @@ Transaction filtering is status-only because that's the only filter
   revisit with Security Center). The screen has not been visually reviewed in a browser yet;
   it reuses the existing card, field, alert and button styles.
 
-The other Release 2 modules (Payments, Statements, Notifications, Security Center) are not
-built: they still have no backend contract.
+**Notifications** (`/notifications` plus a bell in the top bar, contract:
+`docs/release-2-notifications-contract.md`, decisions N1-N7 approved):
+
+- Bell shows the unread count (`99+` cap), polled once a minute and on window focus (N4). A failed
+  count hides the badge only.
+- Inbox: newest first, filter by All / Transactions / Security and "Unread only", page through,
+  "Mark as read" per notice, "Mark all as read". "View" opens the transfer (or the beneficiaries
+  page) and marks the notice read.
+- The server sends a type and structured params; the wording is in
+  `src/features/notifications/messages.ts` (N2). Unknown types get a generic message. Only the last
+  four characters of any account are shown.
+- MSW mocks emit notices when a mock transfer completes, goes to review or is cancelled, and when a
+  beneficiary is added or deleted, so the loop works under `npm run dev`.
+- Not done: no visual review in a real browser yet; no push or real-time delivery (by decision).
+
+The other Release 2 modules (Payments, Statements, Security Center) are not built: they still
+have no backend contract.
 
 ## Deferred to later phases
 

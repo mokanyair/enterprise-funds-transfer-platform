@@ -17,6 +17,7 @@ SPECS=(
   transfers/transfers-v1.yaml
   accounts/accounts-v1.yaml
   beneficiaries/beneficiaries-v1.yaml
+  notifications/notifications-v1.yaml
   funds-transfer-v1.yaml
 )
 

@@ -170,7 +170,7 @@ Run it yourself: start Oracle and Kafka, then `FUNDS_IT_ENABLED=true FUNDS_IT_KA
 
 ## 10. Not in this change
 
-- Notifications **API and screen** (list, unread count, mark read): next, as their own contract on top of `NOTIFICATIONS`.
+- Notifications **API and screen**: done separately, see `docs/release-2-notifications-contract.md` (V11).
 - Delivery channels (email, SMS, push).
 - Keycloak security events (logins, MFA changes) for Security Center: a separate stream from Keycloak itself.
 - A schema registry: the JSON envelope plus `schemaVersion` is the contract for now.

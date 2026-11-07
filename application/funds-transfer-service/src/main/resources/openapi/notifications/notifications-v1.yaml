@@ -1,0 +1,231 @@
+openapi: 3.0.3
+info:
+  title: Funds Transfer API - Notifications
+  version: 1.3.0   # keep equal to the root spec (funds-transfer-v1.yaml)
+  description: |
+    Release 2. The customer's in-app notification inbox, read side of the
+    NOTIFICATIONS table that the Kafka consumer fills
+    (`docs/release-2-event-streaming.md`).
+    **Status: APPROVED v1.3.0 (2026-10-18)** (`docs/release-2-notifications-contract.md`).
+
+    Notifications belong to the customer, so all users of a customer share one
+    inbox and one read state (decision N1). The API returns a `type` and
+    structured `params` only; the client renders the wording, so text can change
+    and be localised without touching stored rows (N2). Params never carry free
+    text or full account numbers. Depends on `common` and `identity`.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+paths:
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: One page of the caller's notifications
+      x-authorization: CUSTOMER only. OPERATOR gets 403.
+      description: |
+        Newest first: `createdAt` descending, `notificationId` as tiebreak (N3).
+        An out-of-range `page` returns 200 with an empty `items` array.
+        `unreadCount` is the customer's total unread count, independent of the
+        filters, so one call can drive both the list and the badge.
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+        - name: page
+          in: query
+          description: Zero-based page index.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: category
+          in: query
+          description: Optional filter.
+          schema: { $ref: '#/components/schemas/NotificationCategory' }
+        - name: unreadOnly
+          in: query
+          description: When true, only notifications with no `readAt`.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: One page of notifications.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPage' }
+              example:
+                items:
+                  - notificationId: 01928f4e-7a1c-7d0e-9b53-6c8f2a1d7e91
+                    category: TRANSACTION
+                    type: TRANSFER_RECEIVED
+                    entityType: TRANSFER
+                    entityId: 01928f4e-7a1c-7d0e-9b53-6c8f2a1d7e92
+                    params: { transferId: 01928f4e-7a1c-7d0e-9b53-6c8f2a1d7e92, amount: "25.00", currency: USD, counterpartyLast4: "1001" }
+                    occurredAt: "2026-10-18T09:00:00.000Z"
+                    createdAt: "2026-10-18T09:00:00.250Z"
+                    readAt: null
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+                unreadCount: 1
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /notifications/unread-count:
+    get:
+      operationId: countUnreadNotifications
+      tags: [notifications]
+      summary: The caller's unread count, for the badge
+      x-authorization: CUSTOMER only. OPERATOR gets 403.
+      description: |
+        Cheap enough to poll. Clients poll at most once a minute and on window
+        focus; there is no push channel in v1 (N4).
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The unread count.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnreadCount' }
+              example: { unreadCount: 3 }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /notifications/{notificationId}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark one notification read
+      x-authorization: CUSTOMER whose customer owns it. OPERATOR gets 403. Otherwise 404.
+      description: |
+        Idempotent (N5): marking an already read notification is 204 again and
+        keeps the first `readAt`. Another customer's notification and an unknown
+        ID return an identical 404.
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Read (or already read).
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        '400': { $ref: '../common/common-v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: '../common/common-v1.yaml#/components/responses/NotFound' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+  /notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all of the caller's notifications read
+      x-authorization: CUSTOMER only. OPERATOR gets 403.
+      description: |
+        Marks every notification that is unread when the request is processed.
+        One that arrives a moment later stays unread, so nothing is marked read
+        that the user could not have seen (N5). Idempotent.
+      parameters:
+        - $ref: '../common/common-v1.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Done.
+          headers:
+            X-Correlation-Id: { $ref: '../common/common-v1.yaml#/components/headers/CorrelationId' }
+        '401': { $ref: '../identity/identity-v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: '../identity/identity-v1.yaml#/components/responses/Forbidden' }
+        '500': { $ref: '../common/common-v1.yaml#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../identity/identity-v1.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    NotificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  headers:
+    NoStore:
+      description: Always `no-store`. Keeps account activity out of shared and browser caches.
+      schema: { type: string, enum: [no-store] }
+
+  schemas:
+    NotificationCategory:
+      type: string
+      enum: [TRANSACTION, SECURITY, ACCOUNT]
+      description: |
+        `ACCOUNT` is reserved: no event produces it yet. Clients must accept it.
+
+    NotificationType:
+      type: string
+      description: |
+        Open set: clients must show a generic message for a type they do not
+        know rather than fail (N2). Current values: `TRANSFER_SENT`,
+        `TRANSFER_RECEIVED`, `TRANSFER_UNDER_REVIEW`, `TRANSFER_REJECTED`,
+        `TRANSFER_CANCELLED`, `BENEFICIARY_ADDED`, `BENEFICIARY_DELETED`.
+      example: TRANSFER_RECEIVED
+
+    NotificationParams:
+      type: object
+      description: |
+        Only the keys below are ever sent, and only those that apply to the
+        type. Transfer types carry `transferId`, `amount`, `currency`,
+        `counterpartyLast4`; beneficiary types carry `beneficiaryId`,
+        `accountIdLast4`. No free text (reference, nickname) and never a full
+        account number.
+      additionalProperties: false
+      properties:
+        transferId:        { type: string, format: uuid }
+        amount:            { $ref: '../common/common-v1.yaml#/components/schemas/Money' }
+        currency:          { type: string, minLength: 3, maxLength: 3 }
+        counterpartyLast4: { type: string, maxLength: 4 }
+        beneficiaryId:     { type: string, format: uuid }
+        accountIdLast4:    { type: string, maxLength: 4 }
+
+    Notification:
+      type: object
+      required: [notificationId, category, type, entityType, entityId, params, occurredAt, createdAt, readAt]
+      properties:
+        notificationId: { type: string, format: uuid }
+        category:       { $ref: '#/components/schemas/NotificationCategory' }
+        type:           { $ref: '#/components/schemas/NotificationType' }
+        entityType:     { type: string, enum: [TRANSFER, BENEFICIARY] }
+        entityId:       { type: string, format: uuid }
+        params:         { $ref: '#/components/schemas/NotificationParams' }
+        occurredAt:     { type: string, format: date-time, description: When the underlying event happened. }
+        createdAt:      { type: string, format: date-time, description: When the notification was stored; the sort key. }
+        readAt:         { type: string, format: date-time, nullable: true }
+
+    NotificationPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages, unreadCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        page:          { type: integer, minimum: 0 }
+        size:          { type: integer, minimum: 1 }
+        totalElements: { type: integer, format: int64, minimum: 0 }
+        totalPages:    { type: integer, minimum: 0 }
+        unreadCount:   { type: integer, format: int64, minimum: 0 }
+
+    UnreadCount:
+      type: object
+      required: [unreadCount]
+      properties:
+        unreadCount: { type: integer, format: int64, minimum: 0 }
