@@ -1,4 +1,32 @@
 
+/*
+ * ================================================================
+ * BANKING APP — JENKINS CI PIPELINE
+ * Phase 4.8: Software Composition Analysis (SCA)
+ * ================================================================
+ *
+ * Backend:       Java 21 / Spring Boot / Maven
+ * Frontend:      React / TypeScript / npm
+ * CI Agent:      Amazon Linux 2023 (ec2-linux)
+ *
+ * Security:
+ *   - Gitleaks, Semgrep, Checkov
+ *   - OSV-Scanner 2.3.8 (report-only)
+ *   - OWASP Dependency-Check 12.1.0 (report-only)
+ *   - CycloneDX SBOM 2.9.1
+ *   - SonarQube backend and frontend quality gates
+ *
+ * Enforcement:
+ *   OSV/OWASP vulnerabilities: NON-BLOCKING
+ *   Scanner execution errors: BLOCKING
+ *   Existing security checks: UNCHANGED
+ *   SonarQube quality gates: ENFORCED on main
+ *
+ * Jenkins credential:
+ *   nvd-api-key (Secret text)
+ * ================================================================
+ */
+
 pipeline {
     agent {
         label 'ec2-linux'
@@ -134,6 +162,41 @@ pipeline {
             }
         }
 
+        // ========================================================
+        // PHASE 4.8 — SOFTWARE COMPOSITION ANALYSIS (SCA)
+        // Vulnerability findings are report-only.
+        // ========================================================
+
+        stage('Prepare SCA Scanner') {
+            steps {
+                sh '''
+                    set -eu
+                    bash ci/security/install-osv.sh
+                '''
+            }
+        }
+
+        stage('Software Composition Analysis - Report Only') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'nvd-api-key',
+                        variable: 'NVD_API_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        set -eu
+                        bash ci/security/run-sca.sh
+                    '''
+                }
+            }
+        }
+
+        // ========================================================
+        // SONARQUBE — BACKEND ANALYSIS AND QUALITY GATE
+        // ========================================================
+
         stage('SonarQube Backend Analysis') {
             when {
                 expression {
@@ -182,6 +245,10 @@ pipeline {
                 }
             }
         }
+
+        // ========================================================
+        // SONARQUBE — FRONTEND ANALYSIS AND QUALITY GATE
+        // ========================================================
 
         stage('SonarQube Frontend Analysis') {
             when {
@@ -259,6 +326,13 @@ pipeline {
 
             archiveArtifacts(
                 artifacts: 'security-reports/*.json',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+
+            // Phase 4.8: Archive SCA reports and CycloneDX SBOM.
+            archiveArtifacts(
+                artifacts: 'reports/sca/*.json,application/funds-transfer-service/target/dependency-check-report.*',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
