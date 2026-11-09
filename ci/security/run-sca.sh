@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -7,7 +8,10 @@ BACKEND="$ROOT/application/funds-transfer-service"
 FRONTEND="$ROOT/application/banking-ui"
 OSV="$ROOT/.ci-tools/bin/osv-scanner"
 
-mkdir -p "$REPORTS"
+# Keep OWASP's H2 database isolated from earlier failed runs.
+OWASP_DATA="$ROOT/.ci-tools/dependency-check-data"
+
+mkdir -p "$REPORTS" "$OWASP_DATA"
 
 echo "=== Generate Backend CycloneDX SBOM ==="
 
@@ -30,9 +34,16 @@ run_osv() {
       --output-file "$report" || rc=$?
 
     case "$rc" in
-        0) echo "OSV $name: no findings reported" ;;
-        1) echo "OSV $name: findings detected (report-only)" ;;
-        *) echo "OSV $name: scanner error ($rc)" >&2; return 1 ;;
+        0)
+            echo "OSV $name: no findings reported"
+            ;;
+        1)
+            echo "OSV $name: findings detected (report-only)"
+            ;;
+        *)
+            echo "OSV $name: scanner error ($rc)" >&2
+            return 1
+            ;;
     esac
 
     test -s "$report"
@@ -61,13 +72,23 @@ echo "=== OWASP Dependency-Check ==="
 
 : "${NVD_API_KEY:?NVD_API_KEY is required}"
 
+# Apply memory limits only to the OWASP Maven invocation.
+# This is an initial setting for the existing 4 GiB EC2 agent.
+OWASP_MAVEN_OPTS="-Xms512m -Xmx2048m -XX:+ExitOnOutOfMemoryError"
+
+echo "OWASP version: 13.0.0"
+echo "OWASP JVM maximum heap: 2048 MiB"
+echo "NVD API results per page: 1000"
+
+MAVEN_OPTS="$OWASP_MAVEN_OPTS" \
 mvn -B -ntp -f "$BACKEND/pom.xml" \
   org.owasp:dependency-check-maven:13.0.0:check \
   -Dformat=ALL \
   -DfailBuildOnCVSS=11 \
   -DfailOnError=true \
-  -DdataDirectory="${HOME}/.cache/dependency-check" \
+  -DdataDirectory="$OWASP_DATA" \
   -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+  -DnvdApiResultsPerPage=1000 \
   -DossIndexAnalyzerEnabled=false \
   -DassemblyAnalyzerEnabled=false
 
