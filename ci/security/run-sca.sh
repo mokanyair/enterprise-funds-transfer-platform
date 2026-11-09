@@ -62,7 +62,7 @@ echo "=== OWASP Dependency-Check ==="
 : "${NVD_API_KEY:?NVD_API_KEY is required}"
 
 mvn -B -ntp -f "$BACKEND/pom.xml" \
-  org.owasp:dependency-check-maven:12.1.0:check \
+  org.owasp:dependency-check-maven:13.0.0:check \
   -Dformat=ALL \
   -DfailBuildOnCVSS=11 \
   -DfailOnError=true \
