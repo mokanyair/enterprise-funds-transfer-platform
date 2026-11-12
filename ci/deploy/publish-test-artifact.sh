@@ -16,7 +16,10 @@ cp "$JAR" .ci-release/app.jar
 python3 - "$GIT_COMMIT" "$BUILD_NUMBER" <<'PY'
 import json,sys,datetime,hashlib
 with open('.ci-release/app.jar','rb') as f:
-    digest=hashlib.file_digest(f,'sha256').hexdigest()
+    hasher = hashlib.sha256()
+    for chunk in iter(lambda: f.read(1024 * 1024), b''):
+        hasher.update(chunk)
+    digest = hasher.hexdigest()
 with open('.ci-release/manifest.json','w') as f:
     json.dump({'commit':sys.argv[1],'build_number':sys.argv[2], 'sha256':digest,
                'published_utc':datetime.datetime.now(datetime.timezone.utc).isoformat()},f,indent=2)
