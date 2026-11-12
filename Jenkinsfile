@@ -122,7 +122,6 @@ pipeline {
                     bash ci/security/install-scanners.sh
                 '''
             }
-            }
         }
 
         stage('Security Scanning') {
