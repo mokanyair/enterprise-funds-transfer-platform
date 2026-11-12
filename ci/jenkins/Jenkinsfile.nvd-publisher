@@ -1,0 +1,109 @@
+
+pipeline {
+    agent {
+        label 'ec2-nvd-cache-publisher'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 120, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Checkout Publisher Source') {
+            steps {
+                git branch: 'feature/phase4-sca',
+                    url: 'https://github.com/mokanyair/enterprise-funds-transfer-platform.git'
+            }
+        }
+
+        stage('Validate Publisher Environment') {
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "=== AWS Identity ==="
+                    aws sts get-caller-identity
+
+                    echo "=== Required Tools ==="
+                    java -version
+                    mvn -version
+                    aws --version
+                    python3 --version
+
+                    echo "=== Disk ==="
+                    df -h /
+
+                    echo "=== Publisher Script ==="
+                    test -f ci/security/publish-nvd-cache.sh
+                    bash -n ci/security/publish-nvd-cache.sh
+
+                    echo "=== Restore Script ==="
+                    test -f ci/security/restore-nvd-cache.sh
+                    bash -n ci/security/restore-nvd-cache.sh
+
+                    echo "Publisher environment validated."
+                '''
+            }
+        }
+
+        stage('Publish NVD Database') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'nvd-api-key',
+                        variable: 'NVD_API_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        set -eu
+
+                        bash ci/security/publish-nvd-cache.sh
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Published Release') {
+            steps {
+                sh '''
+                    set -eu
+
+                    BUCKET="eftabankingnvddatavdc"
+                    PREFIX="jenkins-cache/dependency-check/v13"
+
+                    aws s3 cp \
+                        "s3://${BUCKET}/${PREFIX}/latest.json" \
+                        /tmp/nvd-latest.json \
+                        --region us-east-1 \
+                        --only-show-errors
+
+                    python3 -m json.tool \
+                        /tmp/nvd-latest.json >/dev/null
+
+                    echo "=== Published Release ==="
+                    cat /tmp/nvd-latest.json
+
+                    echo "PASS: NVD release manifest verified."
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'SUCCESS: NVD database published to S3.'
+        }
+
+        failure {
+            echo 'FAILED: NVD publisher. Previous verified release remains the intended fallback.'
+        }
+
+        always {
+            echo 'NVD publisher execution completed.'
+        }
+    }
+}

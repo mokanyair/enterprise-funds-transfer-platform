@@ -49,3 +49,4 @@ target/
 
 # Generated frontend coverage
 /application/banking-ui/coverage/
+/reports/
