@@ -17,7 +17,11 @@ import json,sys,hashlib,re
 m=json.load(open(sys.argv[1])); p=sys.argv[2]
 assert m['commit']==p.split('/')[4] and str(m['build_number'])==p.split('/')[5].removeprefix('build-')
 assert re.fullmatch(r'[a-f0-9]{64}',m['sha256'])
-with open(sys.argv[3],'rb') as f: assert hashlib.file_digest(f,'sha256').hexdigest()==m['sha256']
+with open(sys.argv[3],'rb') as f:
+    hasher = hashlib.sha256()
+    for chunk in iter(lambda: f.read(1024 * 1024), b''):
+        hasher.update(chunk)
+    assert hasher.hexdigest() == m['sha256']
 PY
 [[ -s "$APP_DIR/app.jar" ]] || { echo 'Existing app.jar missing; refusing first-time install'; exit 1; }
 BACKUP="$APP_DIR/app.jar.pre-deploy.$(date -u +%Y%m%dT%H%M%SZ)"
