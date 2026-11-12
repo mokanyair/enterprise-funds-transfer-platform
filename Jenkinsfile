@@ -68,8 +68,10 @@ pipeline {
                         .replaceFirst(/^origin\//, '')
                         .replaceFirst(/^refs\/heads\//, '')
                     def isMainCommit = (headCommit == mainCommit)
-                    def isTestBranch = (branch == 'integration/test-deployment')
-
+                    def isTestBranch = (
+                        branch == 'integration/test-deployment' ||
+                        env.JOB_BASE_NAME == 'banking-app-test-deploy'
+                    )    
                     env.SONAR_ANALYSIS_ENABLED = isMainCommit.toString()
                     env.TEST_DEPLOY_ENABLED = (isTestBranch && isMainCommit).toString()
 
