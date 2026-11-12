@@ -2,7 +2,7 @@
 /*
  * ================================================================
  * BANKING APP — JENKINS CI PIPELINE
- * Phase 4.8: Software Composition Analysis (SCA)
+ * Phase 4.10: Existing CI/SCA + SonarQube-gated TEST deployment
  * ================================================================
  *
  * Backend:       Java 21 / Spring Boot / Maven
@@ -62,12 +62,26 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    env.SONAR_ANALYSIS_ENABLED =
-                        (headCommit == mainCommit).toString()
+                    // SonarQube Community Edition: only analyze the main commit.
+                    // TEST integration is a promotion branch pointing at that exact commit.
+                    def branch = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '')
+                        .replaceFirst(/^origin\//, '')
+                        .replaceFirst(/^refs\/heads\//, '')
+                    def isMainCommit = (headCommit == mainCommit)
+                    def isTestBranch = (branch == 'integration/test-deployment')
+
+                    env.SONAR_ANALYSIS_ENABLED = isMainCommit.toString()
+                    env.TEST_DEPLOY_ENABLED = (isTestBranch && isMainCommit).toString()
 
                     echo "Checked-out commit: ${headCommit}"
                     echo "origin/main commit: ${mainCommit}"
+                    echo "Jenkins branch: ${branch}"
                     echo "SonarQube analysis enabled: ${env.SONAR_ANALYSIS_ENABLED}"
+                    echo "TEST deployment enabled: ${env.TEST_DEPLOY_ENABLED}"
+
+                    if (isTestBranch && !isMainCommit) {
+                        error('TEST promotion rejected: integration branch commit does not match origin/main')
+                    }
                 }
 
                 sh '''
@@ -107,6 +121,7 @@ pipeline {
                     set -eu
                     bash ci/security/install-scanners.sh
                 '''
+            }
             }
         }
 
@@ -317,6 +332,42 @@ pipeline {
                     fingerprint: true,
                     allowEmptyArchive: false
                 )
+            }
+        }
+
+        // TEST deployment is permitted only after all preceding CI and SonarQube gates pass.
+        stage('Publish TEST Artifact') {
+            when {
+                expression {
+                    env.TEST_DEPLOY_ENABLED == 'true' &&
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    export GIT_COMMIT="$(git rev-parse HEAD)"
+                    test -s application/funds-transfer-service/target/funds-transfer-service-1.0.2-SNAPSHOT.jar
+                    bash ci/deploy/publish-test-artifact.sh
+                    test -s .ci-release/release-prefix.txt
+                '''
+            }
+        }
+
+        stage('Deploy to TEST') {
+            when {
+                expression {
+                    env.TEST_DEPLOY_ENABLED == 'true' &&
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh '''
+                        set -eu
+                        bash ci/deploy/deploy-test.sh "$(cat .ci-release/release-prefix.txt)"
+                    '''
+                }
             }
         }
     }
