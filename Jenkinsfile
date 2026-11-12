@@ -12,9 +12,10 @@
  * Security:
  *   - Gitleaks, Semgrep, Checkov
  *   - OSV-Scanner 2.3.8 (report-only)
- *   - OWASP Dependency-Check 12.1.0 (report-only)
+ *   - OWASP Dependency-Check 13.0.0 (S3-backed, offline, report-only)
  *   - CycloneDX SBOM 2.9.1
  *   - SonarQube backend and frontend quality gates
+ *
  *
  * Enforcement:
  *   OSV/OWASP vulnerabilities: NON-BLOCKING
@@ -176,20 +177,31 @@ pipeline {
             }
         }
 
+                stage('Restore NVD Database from S3') {
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "=== Restore Verified NVD Cache ==="
+                    bash ci/security/restore-nvd-cache.sh
+
+                    echo "=== Verify Restored Database ==="
+                    test -d .ci-tools/dependency-check-data
+
+                    find .ci-tools/dependency-check-data \
+                      -type f -name '*.mv.db' -size +0c
+                '''
+            }
+        }
+
         stage('Software Composition Analysis - Report Only') {
             steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'nvd-api-key',
-                        variable: 'NVD_API_KEY'
-                    )
-                ]) {
-                    sh '''
-                        set +x
-                        set -eu
-                        bash ci/security/run-sca.sh
-                    '''
-                }
+                sh '''
+                    set -eu
+
+                    echo "=== Run S3-Backed SCA ==="
+                    bash ci/security/run-sca.sh
+                '''
             }
         }
 

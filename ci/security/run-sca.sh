@@ -70,15 +70,23 @@ run_osv frontend --lockfile "$FRONTEND/package-lock.json"
 
 echo "=== OWASP Dependency-Check ==="
 
-: "${NVD_API_KEY:?NVD_API_KEY is required}"
 
 # Apply memory limits only to the OWASP Maven invocation.
 # This is an initial setting for the existing 4 GiB EC2 agent.
 OWASP_MAVEN_OPTS="-Xms512m -Xmx2048m -XX:+ExitOnOutOfMemoryError"
 
+
 echo "OWASP version: 13.0.0"
 echo "OWASP JVM maximum heap: 2048 MiB"
-echo "NVD API results per page: 1000"
+echo "NVD database source: verified S3 cache"
+echo "NVD automatic updates: disabled"
+
+# Fail immediately if the restored database is missing.
+if ! find "$OWASP_DATA" -type f -name '*.mv.db' \
+    -size +0c -print -quit | grep -q .; then
+    echo "ERROR: Restored NVD database not found." >&2
+    exit 1
+fi
 
 MAVEN_OPTS="$OWASP_MAVEN_OPTS" \
 mvn -B -ntp -f "$BACKEND/pom.xml" \
@@ -87,8 +95,7 @@ mvn -B -ntp -f "$BACKEND/pom.xml" \
   -DfailBuildOnCVSS=11 \
   -DfailOnError=true \
   -DdataDirectory="$OWASP_DATA" \
-  -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
-  -DnvdApiResultsPerPage=1000 \
+  -DautoUpdate=false \
   -DossIndexAnalyzerEnabled=false \
   -DassemblyAnalyzerEnabled=false
 
