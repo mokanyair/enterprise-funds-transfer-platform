@@ -326,6 +326,16 @@ pipeline {
             }
         }
 
+        // Validate deployment and recovery mechanisms before publishing artifacts.
+        stage('Deployment Regression Tests') {
+            steps {
+                sh '''
+                    set -eu
+                    bash ci/deploy/tests/run-all.sh
+                '''
+            }
+        }
+
         stage('Archive Build Artifacts') {
             steps {
                 archiveArtifacts(
@@ -363,7 +373,7 @@ pipeline {
                 }
             }
             steps {
-                timeout(time: 10, unit: 'MINUTES') {
+                timeout(time: 20, unit: 'MINUTES') {
                     sh '''
                         set -eu
                         bash ci/deploy/deploy-test.sh "$(cat .ci-release/release-prefix.txt)"
