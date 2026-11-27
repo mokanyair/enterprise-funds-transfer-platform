@@ -121,6 +121,132 @@ def release_from_manifest(path, jar):
     }
 
 
+def frontend_metadata(manifest, directory):
+    """Associate an extracted frontend with its release."""
+
+    if manifest.get("schema_version", 1) == 1:
+        require(directory is None,
+                "Legacy release cannot contain frontend metadata")
+        return None
+
+    require(manifest.get("schema_version") == 2,
+            "Unsupported manifest version")
+
+    require(directory is not None,
+            "Full-stack release requires frontend directory")
+
+    directory = Path(directory)
+
+    require(directory.is_dir() and not directory.is_symlink(),
+            "Invalid frontend release directory")
+
+    archive_sha = manifest["artifacts"]["frontend"]["sha256"]
+
+    require(
+        isinstance(archive_sha, str) and
+        re.fullmatch(r"[a-f0-9]{64}", archive_sha),
+        "Invalid frontend archive checksum"
+    )
+
+    inventory = directory / ".release-inventory.json"
+
+    require(inventory.is_file() and not inventory.is_symlink(),
+            "Frontend inventory missing")
+
+    metadata = {
+        "sha256": archive_sha,
+        "directory": str(directory.resolve()),
+        "inventory_sha256": digest(inventory),
+    }
+
+    verify_frontend(metadata)
+
+    return metadata
+
+
+def verify_frontend(metadata):
+    """Verify every extracted frontend file."""
+
+    if metadata is None:
+        return
+
+    directory = Path(metadata["directory"])
+    inventory_path = directory / ".release-inventory.json"
+
+    require(directory.is_dir() and not directory.is_symlink(),
+            "Frontend release directory unavailable")
+
+    require(
+        inventory_path.is_file() and
+        not inventory_path.is_symlink(),
+        "Frontend inventory unavailable"
+    )
+
+    require(
+        digest(inventory_path) == metadata["inventory_sha256"],
+        "Frontend inventory checksum mismatch"
+    )
+
+    inventory = load_json(inventory_path)
+
+    require(isinstance(inventory, dict) and inventory,
+            "Invalid frontend inventory")
+
+    require("index.html" in inventory,
+            "Frontend index missing from inventory")
+
+    actual = {}
+
+    for path in directory.rglob("*"):
+
+        require(not path.is_symlink(),
+                "Frontend symbolic link prohibited")
+
+        if path.is_dir():
+            continue
+
+        require(path.is_file(),
+                "Unsupported frontend filesystem object")
+
+        relative = path.relative_to(directory).as_posix()
+
+        if relative == ".release-inventory.json":
+            continue
+
+        actual[relative] = digest(path)
+
+    require(actual == inventory,
+            "Frontend release inventory mismatch")
+
+
+def verify_active_frontend(release, active_frontend):
+    """Verify the active symlink against persistent release state."""
+
+    metadata = release.get("frontend")
+
+    if active_frontend is None:
+        require(metadata is None,
+                "Active frontend path required")
+        return
+
+    active = Path(active_frontend)
+
+    if metadata is None:
+        require(not os.path.lexists(active),
+                "Unexpected active frontend for legacy release")
+        return
+
+    require(active.is_symlink(),
+            "Active frontend must be a symbolic link")
+
+    require(
+        active.resolve() == Path(metadata["directory"]).resolve(),
+        "Active frontend points to another release"
+    )
+
+    verify_frontend(metadata)
+
+
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -144,12 +270,16 @@ def main():
     begin.add_argument("--manifest", required=True)
     begin.add_argument("--jar", required=True)
     begin.add_argument("--backup", required=True)
+    begin.add_argument("--frontend-dir")
+    begin.add_argument("--active-frontend")
 
     success = commands.add_parser("success")
     success.add_argument("--active-jar", required=True)
+    success.add_argument("--active-frontend")
 
     rollback = commands.add_parser("rollback")
     rollback.add_argument("--active-jar", required=True)
+    rollback.add_argument("--active-frontend")
 
     failure = commands.add_parser("failure")
     failure.add_argument("--reason", required=True)
@@ -159,6 +289,7 @@ def main():
     promote.add_argument("--commit", required=True)
     promote.add_argument("--build", required=True)
     promote.add_argument("--evidence", required=True)
+    promote.add_argument("--active-frontend")
 
     commands.add_parser("show")
 
@@ -223,6 +354,21 @@ def main():
 
         previous = dict(state["current"])
 
+        manifest = load_json(Path(args.manifest))
+
+        candidate_frontend = frontend_metadata(
+            manifest, args.frontend_dir
+        )
+
+        if candidate_frontend is not None:
+            require(args.active_frontend is not None,
+                    "Active frontend path required")
+            candidate["frontend"] = candidate_frontend
+
+        verify_active_frontend(
+            previous, args.active_frontend
+        )
+
         require(
             digest(args.backup) == previous["sha256"],
             "Backup does not match current release"
@@ -258,12 +404,19 @@ def main():
             "Installed candidate checksum mismatch"
         )
 
+        verify_active_frontend(
+            candidate, args.active_frontend
+        )
+
         candidate["status"] = "runtime_verified"
         candidate["verified_utc"] = utc_now()
 
         state = pending["original_state"]
         state["previous"] = pending["previous"]
         state["current"] = candidate
+
+        if candidate.get("frontend") is not None:
+            state["schema_version"] = 2
 
         atomic_json(state_path, state)
 
@@ -287,6 +440,10 @@ def main():
         )
 
         original = pending["original_state"]
+
+        verify_active_frontend(
+            original["current"], args.active_frontend
+        )
 
         atomic_json(state_path, original)
 
@@ -331,6 +488,10 @@ def main():
         require(
             bool(args.evidence.strip()),
             "Functional validation evidence required"
+        )
+
+        verify_active_frontend(
+            current, args.active_frontend
         )
 
         promoted = dict(current)

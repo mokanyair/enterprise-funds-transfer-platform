@@ -336,6 +336,56 @@ pipeline {
             }
         }
 
+        // Build the deployable NovaBank frontend using TEST configuration.
+        // Execute only when the existing deployment gates permit TEST.
+        stage('Build TEST Frontend') {
+            when {
+                expression {
+                    env.TEST_DEPLOY_ENABLED == 'true' &&
+                    env.SONAR_ANALYSIS_ENABLED == 'true'
+                }
+            }
+            steps {
+                dir('application/banking-ui') {
+                    sh '''
+                        set -eu
+
+                        echo "=== Configure TEST Frontend ==="
+
+                        export VITE_API_URL=/api/v1
+                        export VITE_AUTH_MODE=keycloak
+                        export VITE_USE_MOCKS=false
+                        export VITE_KEYCLOAK_URL=http://auth.eftbank.internal:8180
+                        export VITE_KEYCLOAK_REALM=bank-test
+                        export VITE_KEYCLOAK_CLIENT_ID=banking-web
+
+                        echo "=== Build TEST Frontend ==="
+
+                        rm -rf -- dist
+
+                        npm run build:test-deploy
+
+                        echo "=== Remove Development Artifacts ==="
+
+                        rm -f -- dist/mockServiceWorker.js
+
+                        find dist -type f -name '*.map' -delete
+
+                        echo "=== Validate Frontend Output ==="
+
+                        test -s dist/index.html
+                        test -d dist/assets
+
+                        grep -rlF 'http://auth.eftbank.internal:8180' dist/assets
+                        grep -rlF 'bank-test' dist/assets
+                        grep -rlF 'banking-web' dist/assets
+
+                        echo "TEST_FRONTEND_BUILD_SUCCESS"
+                    '''
+                }
+            }
+        }
+
         stage('Archive Build Artifacts') {
             steps {
                 archiveArtifacts(

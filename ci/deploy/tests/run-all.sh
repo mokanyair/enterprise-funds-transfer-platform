@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Phase 1: Validate Bash syntax.
 # Phase 2: Validate Python syntax.
-# Phase 3: Execute all five regression suites.
+# Phase 3: Execute all six regression suites.
 # Phase 4: Report consolidated validation results.
 # ============================================================
 
@@ -48,6 +48,13 @@ do
 
     bash "$ROOT/tests/$script"
 done
+
+echo
+echo "========================================"
+echo "Running: test-frontend-security.py"
+echo "========================================"
+
+python3 "$ROOT/tests/test-frontend-security.py"
 
 echo
 echo "PHASE 4: Consolidated validation result"

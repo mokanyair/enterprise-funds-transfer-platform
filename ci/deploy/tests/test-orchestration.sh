@@ -21,13 +21,14 @@ trap 'rm -rf -- "$SANDBOX"' EXIT
 export MOCK_ROOT="$SANDBOX"
 
 export MOCK_APP="$SANDBOX/application"
+export MOCK_FRONTEND="$SANDBOX/frontend"
 export MOCK_S3="$SANDBOX/s3"
 export MOCK_MODE=success
 
 STATE_DIR="$MOCK_APP/deployment-state"
 
 mkdir -p "$SANDBOX/bin" "$SANDBOX/scripts"
-mkdir -p "$MOCK_APP/releases" "$MOCK_S3"
+mkdir -p "$MOCK_APP/releases" "$MOCK_S3" "$MOCK_FRONTEND/releases"
 
 cp -r "$ROOT/lib" "$SANDBOX/scripts/"
 cp "$ROOT/remote-install.sh" "$SANDBOX/scripts/"
@@ -48,6 +49,7 @@ path = directory / "remote-install.sh"
 text = path.read_text()
 
 replacements = [
+    ("FRONTEND_ROOT=/var/www/novabank", 'FRONTEND_ROOT="${MOCK_FRONTEND:?}"'),
     ("APP_DIR=/opt/funds-transfer",
      'APP_DIR="${MOCK_APP:?Test directory required}"'),
     ('[[ "$EUID" -eq 0 ]] || {',
@@ -75,7 +77,7 @@ boundaries = [
         "BEFORE_JOURNAL"
     ),
     (
-        '--backup "$BACKUP"',
+        '--active-frontend "$ACTIVE_FRONTEND"\n\nenable_maintenance',
         "AFTER_JOURNAL"
     ),
     (
@@ -107,6 +109,8 @@ for original, boundary in boundaries:
             "\n\nrestart_application",
             hook + "\nrestart_application"
         )
+    elif boundary == "AFTER_JOURNAL":
+        updated = original.replace("\n\nenable_maintenance", hook + "\nenable_maintenance")
     elif boundary == "AFTER_RESTART":
         updated = original.replace(
             "\n\n# Phase 6:",
@@ -177,6 +181,15 @@ cat > "$SANDBOX/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "$*" in
+    *http://127.0.0.1/healthz*) printf 'nginx-up'; exit 0 ;;
+    *http://127.0.0.1/\ *)
+        if [[ "$*" == *'%{http_code}'* ]]; then printf 503; exit 0; fi
+        [[ ! -e "$MOCK_FRONTEND/maintenance" ]] || exit 22
+        cp "$MOCK_FRONTEND/current/index.html" "${@: -1}"
+        exit 0 ;;
+    *http://127.0.0.1/) printf 503; exit 0 ;;
+esac
 case "$MOCK_MODE" in
     rollback_failure)
         if [[ -s "$MOCK_ROOT/restarts.log" ]]; then
@@ -224,6 +237,7 @@ cat > "$SANDBOX/bin/selinuxenabled" <<'MOCK'
 exit 1
 MOCK
 
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SANDBOX/bin/nginx"
 chmod 700 "$SANDBOX/bin/"*
 
 # Phase 3: Create release artifacts with valid checksums.
@@ -256,6 +270,8 @@ make_release() {
 import hashlib
 import json
 import sys
+import tarfile
+import io
 from pathlib import Path
 
 directory = Path(sys.argv[1])
@@ -268,6 +284,21 @@ manifest = {
         (directory / "app.jar").read_bytes()
     ).hexdigest(),
 }
+
+if parts[5] != "build-4":
+    archive = directory / "frontend.tar.gz"
+    import gzip
+    with archive.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as compressed, tarfile.open(fileobj=compressed, mode="w") as package:
+        for name, data in [("index.html", parts[5].encode()), ("assets/app.js", b"console.log(1)")]:
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            package.addfile(member, io.BytesIO(data))
+    manifest.update(schema_version=2, environment="test", artifacts={})
+    for key, name in [("backend", "app.jar"), ("frontend", "frontend.tar.gz")]:
+        data = (directory / name).read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        manifest["artifacts"][key] = dict(filename=name, sha256=sha, size_bytes=len(data))
+        (directory / (name + ".sha256")).write_text(f"{sha}  {name}\n")
 
 (directory / "manifest.json").write_text(
     json.dumps(manifest)
@@ -333,6 +364,7 @@ echo "TEST 1: Complete successful deployment"
 deploy "$NEW_PREFIX"
 
 check_current 5
+[[ "$(readlink "$MOCK_FRONTEND/current")" == "$MOCK_FRONTEND/releases/$NEW_COMMIT-build-5" ]]
 
 grep -q "GOOD RELEASE 5" "$MOCK_APP/app.jar"
 

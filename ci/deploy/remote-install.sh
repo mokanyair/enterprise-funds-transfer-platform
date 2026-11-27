@@ -36,10 +36,15 @@ BACKUP_DIR="$STATE_DIR/backups"
 
 STATE_MANAGER="$SCRIPT_DIR/lib/release-state.py"
 VALIDATOR="$SCRIPT_DIR/lib/validate-artifact.py"
+EXTRACTOR="$SCRIPT_DIR/lib/extract-frontend.py"
+FRONTEND_ROOT=/var/www/novabank
+FRONTEND_RELEASES="$FRONTEND_ROOT/releases"
+ACTIVE_FRONTEND="$FRONTEND_ROOT/current"
 
 COMMIT="$(cut -d/ -f5 <<< "$PREFIX")"
 BUILD="${PREFIX##*/}"
 RELEASE_DIR="$RELEASES_DIR/$COMMIT-$BUILD"
+FRONTEND_RELEASE="$FRONTEND_RELEASES/$COMMIT-$BUILD"
 
 PENDING="$STATE_DIR/pending-deployment.json"
 
@@ -58,7 +63,7 @@ log "PHASE 1: Validate prerequisites and acquire deployment lock"
     exit 1
 }
 
-for command in aws python3 curl flock sha256sum timeout; do
+for command in aws python3 curl flock sha256sum timeout realpath nginx; do
     command -v "$command" >/dev/null || {
         log "Missing required command: $command"
         exit 1
@@ -108,9 +113,17 @@ restart_application() {
 
 # Phase 7: Restore a verified backup and confirm recovery.
 rollback_application() {
-    local backup expected
+    local backup expected previous_frontend
 
     log "ROLLBACK: Reading persistent recovery journal"
+    enable_maintenance "$FRONTEND_ROOT" || return 1
+    previous_frontend="$(python3 -c '
+import json,sys,runpy
+previous = json.load(open(sys.argv[1]))["original_state"]["current"]
+metadata = previous.get("frontend")
+runpy.run_path(sys.argv[2])["verify_frontend"](metadata)
+print((metadata or {}).get("directory", ""))
+' "$PENDING" "$STATE_MANAGER")" || return 1
 
     backup="$(python3 -c '
 import json,sys
@@ -137,7 +150,15 @@ print(json.load(open(sys.argv[1]))["previous"]["sha256"])
 
     verify_checksum "$ACTIVE_JAR" "$expected" || return 1
 
-    state rollback --active-jar "$ACTIVE_JAR" || return 1
+    restore_frontend "$FRONTEND_ROOT" "$previous_frontend" || return 1
+    disable_maintenance "$FRONTEND_ROOT" || return 1
+    if [[ -n "$previous_frontend" ]]; then
+        verify_frontend_http "$FRONTEND_ROOT" || return 1
+    else
+        verify_backend_only_http "$FRONTEND_ROOT" || return 1
+    fi
+    state rollback --active-jar "$ACTIVE_JAR" \
+        --active-frontend "$ACTIVE_FRONTEND" || return 1
 
     log "ROLLBACK_SUCCESS: Previous application restored"
 }
@@ -157,6 +178,7 @@ on_exit() {
             if rollback_application; then
                 log "Previous release recovered; deployment remains FAILED"
             else
+                enable_maintenance "$FRONTEND_ROOT" || log "CRITICAL: Maintenance activation failed"
                 state failure --reason "Automatic rollback failed" ||
                     log "Unable to write failure history"
 
@@ -196,6 +218,7 @@ if [[ -f "$PENDING" ]]; then
         log "Interrupted deployment recovered; retry with a new build"
         exit 75
     else
+        enable_maintenance "$FRONTEND_ROOT" || log "CRITICAL: Maintenance activation failed"
         state failure --reason "Interrupted deployment recovery failed" ||
             true
         log "CRITICAL: Manual recovery required"
@@ -204,11 +227,17 @@ if [[ -f "$PENDING" ]]; then
 fi
 
 # Phase 2: Stage downloads without overwriting existing releases.
+[[ -d "$FRONTEND_RELEASES" && ! -L "$FRONTEND_RELEASES" ]] || exit 1
+nginx_healthy || exit 1
+[[ ! -e "$FRONTEND_ROOT/maintenance" ]] || {
+    log "Unexpected maintenance marker; manual inspection required"
+    exit 1
+}
 log "PHASE 2: Download and validate candidate artifact"
 
 STAGING="$(mktemp -d "$RELEASES_DIR/.incoming.XXXXXXXX")"
 
-for name in app.jar app.jar.sha256 manifest.json; do
+for name in manifest.json app.jar app.jar.sha256 frontend.tar.gz frontend.tar.gz.sha256; do
     AWS_MAX_ATTEMPTS=2 timeout 25s aws s3 cp \
         "s3://$BUCKET/$PREFIX/$name" \
         "$STAGING/$name" \
@@ -216,11 +245,12 @@ for name in app.jar app.jar.sha256 manifest.json; do
         --only-show-errors
 done
 
-CANDIDATE_SHA="$(python3 "$VALIDATOR" "$STAGING" "$PREFIX")"
+CANDIDATE_SHA="$(python3 "$VALIDATOR" "$STAGING" "$PREFIX" --require-fullstack)"
 
 if [[ -d "$RELEASE_DIR" ]]; then
-    EXISTING_SHA="$(python3 "$VALIDATOR" "$RELEASE_DIR" "$PREFIX")"
+    EXISTING_SHA="$(python3 "$VALIDATOR" "$RELEASE_DIR" "$PREFIX" --require-fullstack)"
 
+    cmp -s "$STAGING/manifest.json" "$RELEASE_DIR/manifest.json" || exit 1
     [[ "$EXISTING_SHA" == "$CANDIDATE_SHA" ]] || {
         log "Existing release differs from downloaded release"
         exit 1
@@ -234,6 +264,19 @@ else
 fi
 
 log "Candidate artifact validated: $CANDIDATE_SHA"
+if [[ -e "$FRONTEND_RELEASE" || -L "$FRONTEND_RELEASE" ]]; then
+    [[ -d "$FRONTEND_RELEASE" && ! -L "$FRONTEND_RELEASE" ]] || exit 1
+    STAGING="$(mktemp -d "$FRONTEND_RELEASES/.verify.XXXXXXXX")"
+    python3 "$EXTRACTOR" --archive "$RELEASE_DIR/frontend.tar.gz" \
+        --destination "$STAGING/frontend"
+    diff -r --no-dereference "$STAGING/frontend" "$FRONTEND_RELEASE"
+    rm -rf -- "$STAGING"
+    STAGING=""
+else
+    python3 "$EXTRACTOR" --archive "$RELEASE_DIR/frontend.tar.gz" \
+        --destination "$FRONTEND_RELEASE"
+fi
+sync -f "$FRONTEND_RELEASE"
 
 # Phase 3: Refuse installation without a healthy rollback baseline.
 log "PHASE 3: Validate existing application and backup"
@@ -283,7 +326,11 @@ ARMED=1
 state begin \
     --manifest "$RELEASE_DIR/manifest.json" \
     --jar "$RELEASE_DIR/app.jar" \
-    --backup "$BACKUP"
+    --backup "$BACKUP" \
+    --frontend-dir "$FRONTEND_RELEASE" \
+    --active-frontend "$ACTIVE_FRONTEND"
+
+enable_maintenance "$FRONTEND_ROOT"
 
 # Phase 5: Atomically replace the JAR and restart the service.
 log "PHASE 5: Install candidate application"
@@ -304,8 +351,13 @@ wait_for_application 60
 
 verify_checksum "$ACTIVE_JAR" "$CANDIDATE_SHA"
 
-state success --active-jar "$ACTIVE_JAR"
+activate_frontend "$FRONTEND_ROOT" "$FRONTEND_RELEASE"
+disable_maintenance "$FRONTEND_ROOT"
+verify_frontend_http "$FRONTEND_ROOT"
+state success --active-jar "$ACTIVE_JAR" \
+    --active-frontend "$ACTIVE_FRONTEND"
 
 ARMED=0
 
+log "FULL_STACK_DEPLOYMENT_SUCCESS"
 log "DEPLOY_SUCCESS prefix=$PREFIX backup=$BACKUP"
