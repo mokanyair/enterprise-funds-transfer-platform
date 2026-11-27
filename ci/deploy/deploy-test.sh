@@ -31,7 +31,8 @@ tar -czf .ci-release/deployment-bundle.tar.gz \
     remote-install.sh \
     lib/deployment-common.sh \
     lib/validate-artifact.py \
-    lib/release-state.py
+    lib/release-state.py \
+    lib/extract-frontend.py
 
 BUNDLE_B64="$(base64 -w0 .ci-release/deployment-bundle.tar.gz)"
 
